@@ -13,12 +13,9 @@ class PostgresWriter:
 
     async def connect(self):
         self.pool = await asyncpg.create_pool(self.dsn)
+        self.logger.info("Connected to PostgreSQL")
 
-    async def run(
-        self,
-        queue: asyncio.Queue[DetailedArticleRecord],
-        stop_event: asyncio.Event
-    ):
+    async def run(self, queue: asyncio.Queue, stop_event: asyncio.Event):
         await self.connect()
         self.logger.info("Postgres writer started")
 
@@ -29,10 +26,12 @@ class PostgresWriter:
                 continue
 
             try:
+                self.logger.info(f"Inserting: {item.url}")
                 await self.insert_article(item)
                 self.count += 1
-            except Exception:
-                self.logger.exception("Failed inserting article")
+                self.logger.info(f"Total inserted: {self.count}")
+            except Exception as e:
+                self.logger.exception(f"DB ERROR: {e}")
             finally:
                 queue.task_done()
 
@@ -43,11 +42,15 @@ class PostgresWriter:
             source, published_at, language, tags
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        ON CONFLICT (url) DO NOTHING;
+        ON CONFLICT (url)
+        DO UPDATE SET
+            title = EXCLUDED.title,
+            content = EXCLUDED.content,
+            summary = EXCLUDED.summary;
         """
 
         async with self.pool.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 query,
                 record.id,
                 record.url,
@@ -59,3 +62,5 @@ class PostgresWriter:
                 record.language,
                 record.tags,
             )
+
+            self.logger.info(f"DB RESULT: {result}")

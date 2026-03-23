@@ -1,25 +1,48 @@
 import asyncio
+import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from news_pipeline.crawler import NewsCrawler
 
 
+def setup_logger():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s"
+    )
+    return logging.getLogger("scheduler")
+
+
+logger = setup_logger()
+
+
 async def run_crawler_once():
-    crawler = NewsCrawler()
-    await crawler.run(run_once=True)
+    logger.info("Starting crawler job...")
+
+    try:
+        crawler = NewsCrawler()
+        await crawler.run(run_once=True)
+        logger.info("Crawler job finished")
+    except Exception as e:
+        logger.exception(f"Crawler crashed: {e}")
 
 
-def start_scheduler():
+async def main():
     scheduler = AsyncIOScheduler()
 
-    # Run every 30 minutes
     scheduler.add_job(
-        lambda: asyncio.create_task(run_crawler_once()),
+        run_crawler_once,
         trigger="interval",
-        minutes=30
+        seconds=10,
+        max_instances=1,
+        coalesce=True,
     )
 
     scheduler.start()
+    logger.info("Scheduler started")
 
-    print("Scheduler started...")
+    while True:
+        await asyncio.sleep(3600)
 
-    asyncio.get_event_loop().run_forever()
+
+if __name__ == "__main__":
+    asyncio.run(main())
