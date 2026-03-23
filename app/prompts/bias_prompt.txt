@@ -7,7 +7,8 @@ Schema:
   "tone": "Neutral | Emotional | Persuasive",
   "bias": {
     "present": true/false,
-    "type": "string"
+    "type": "Framing | Political | Sensational | None",
+    "explanation": "short reason"
   },
   "loaded_language": ["list of phrases"],
   "missing_viewpoints": ["list"],
@@ -15,10 +16,11 @@ Schema:
 }
 
 Rules:
+- DO NOT assume political ideology unless explicitly stated
+- If political bias is unclear, use "Framing" or "None"
+- Base conclusions ONLY on given text
 - Output ONLY JSON
-- No explanations
-- Be objective
-- If unsure, reduce confidence
+- Ensure JSON is complete
 
 Article:
 {article}
