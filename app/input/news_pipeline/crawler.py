@@ -10,6 +10,7 @@ from hashlib import md5
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from news_pipeline.db_writer import PostgresWriter
 
 import aiohttp
 import requests
@@ -29,8 +30,6 @@ from news_pipeline.extractors import (
 )
 from news_pipeline.metadata_gate import MetadataGate
 from news_pipeline.models import ArticleTask, DetailedArticleRecord, DiscoveryTask, FetchTask
-from news_pipeline.storage import FailedJsonlWriter, JsonlWriter
-
 
 class NewsCrawler:
     def __init__(self, settings: CrawlSettings | None = None) -> None:
@@ -92,12 +91,10 @@ class NewsCrawler:
         ) as session:
             self._session = session
 
-            detailed_writer = JsonlWriter(self.settings.output_detailed_jsonl_path, self.logger)
-            failed_writer = FailedJsonlWriter(self.settings.output_failed_jsonl_path, self.logger)
+            detailed_writer = PostgresWriter(dsn="postgresql://user:pass@localhost/db", logger=self.logger)
 
             writer_tasks = [
                 asyncio.create_task(detailed_writer.run(self.write_queue, self.stop_event), name="detailed-writer"),
-                asyncio.create_task(failed_writer.run(self.failed_queue, self.stop_event), name="failed-writer"),
             ]
             monitor_task = asyncio.create_task(self._progress_monitor(), name="progress-monitor")
 
