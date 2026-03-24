@@ -17,9 +17,9 @@ from dateutil import parser as dt_parser
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from news_pipeline.db_writer import PostgresWriter
-from news_pipeline.config import CrawlSettings, Source, build_sources, load_settings
-from news_pipeline.extractors import (
+from .db_writer import PostgresWriter
+from .config import CrawlSettings, Source, build_sources, load_settings
+from .extractors import (
     canonicalize_url,
     clean_article_html,
     extract_links_from_html,
@@ -28,9 +28,9 @@ from news_pipeline.extractors import (
     parse_rss_entries,
     summarize_text,
 )
-from news_pipeline.metadata_gate import MetadataGate
-from news_pipeline.models import ArticleTask, DetailedArticleRecord, DiscoveryTask, FetchTask
-from news_pipeline.test_classifier import classify_url
+from .metadata_gate import MetadataGate
+from .models import ArticleTask, DetailedArticleRecord, DiscoveryTask, FetchTask
+from .test_classifier import classify_url
 
 class NewsCrawler:
     def __init__(self, settings: CrawlSettings | None = None) -> None:

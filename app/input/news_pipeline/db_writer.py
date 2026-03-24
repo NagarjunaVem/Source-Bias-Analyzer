@@ -1,7 +1,7 @@
 import asyncio
 import asyncpg
 import logging
-from news_pipeline.models import DetailedArticleRecord
+from .models import DetailedArticleRecord
 from app.embeddings.embed import get_embedding
 from app.embeddings.vector_store import load_index, save_index
 import faiss

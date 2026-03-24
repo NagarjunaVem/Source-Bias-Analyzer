@@ -3,7 +3,7 @@ import logging
 import sys
 import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from news_pipeline.crawler import NewsCrawler
+from .crawler import NewsCrawler
 
 # ─── CONFIGURE INTERVAL HERE ───────────────────────────────────────────────
 INTERVAL_MINUTES = 30

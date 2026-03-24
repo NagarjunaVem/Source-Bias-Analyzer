@@ -1,4 +1,4 @@
-from news_pipeline.scheduler import main
+from app.input.news_pipeline.scheduler import main
 import asyncio
 
 if __name__ == "__main__":

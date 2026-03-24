@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from news_pipeline.extractors import canonicalize_url
+from .extractors import canonicalize_url
 
 
 class MetadataGate:
