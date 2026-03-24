@@ -13,3 +13,6 @@ lxml
 feedparser
 python-dateutil
 python-dotenv
+sentence-transformers
+faiss-cpu
+numpy
