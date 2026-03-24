@@ -187,7 +187,7 @@ class NewsCrawler:
 
         title = str(extracted.get("headline") or task.title_hint or "").strip()
         content = str(extracted.get("content") or "").strip()
-        
+
         if not classify_url(normalized_url, content):
             self.logger.info(f"FILTERED (weak article): {normalized_url}")
             return
@@ -199,7 +199,7 @@ class NewsCrawler:
         tags = generate_tags(title, content, [], max_tags=5) or ["news"]
 
         record = DetailedArticleRecord(
-            id=md5(content.encode()).hexdigest(),
+            id = md5(normalized_url.encode()).hexdigest(),
             url=normalized_url,
             title=title,
             text=content,
