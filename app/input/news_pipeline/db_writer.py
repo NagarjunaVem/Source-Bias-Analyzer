@@ -42,7 +42,13 @@ class PostgresWriter:
             source, published_at, language, tags
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        ON CONFLICT (id) DO NOTHING
+
+        ON CONFLICT (url)
+        DO UPDATE SET
+            title = EXCLUDED.title,
+            content = EXCLUDED.content,
+            summary = EXCLUDED.summary,
+            tags = EXCLUDED.tags;
         """
 
         async with self.pool.acquire() as conn:
