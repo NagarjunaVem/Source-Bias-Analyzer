@@ -19,6 +19,8 @@ from app.embeddings.vector_store import build_faiss_index, save_index
 
 DEFAULT_FALLBACK_INPUT_PATH = PROJECT_ROOT / "data" / "new_articles_detailed.jsonl"
 DEFAULT_SAVE_DIR = PROJECT_ROOT / "app" / "embeddings" / "vector_index"
+DEFAULT_CHUNK_SIZE = 180
+DEFAULT_CHUNK_OVERLAP = 30
 
 
 async def _load_articles_from_db(dsn: str) -> list[dict[str, str]]:
@@ -109,6 +111,65 @@ def _load_articles_from_fallback(input_path: Path) -> list[dict[str, str]]:
     return articles
 
 
+def split_text_into_chunks(
+    text: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[str]:
+    """Split text into overlapping word chunks."""
+    words = text.split()
+    if not words:
+        return []
+
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than 0.")
+    if chunk_overlap < 0:
+        raise ValueError("chunk_overlap cannot be negative.")
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be smaller than chunk_size.")
+
+    chunks: list[str] = []
+    start = 0
+    step = chunk_size - chunk_overlap
+
+    while start < len(words):
+        chunk_words = words[start : start + chunk_size]
+        if not chunk_words:
+            break
+        chunks.append(" ".join(chunk_words))
+        start += step
+
+    return chunks
+
+
+def chunk_articles(articles: list[dict[str, str]]) -> list[dict[str, str | int]]:
+    """Convert article records into chunk records for embedding."""
+    chunk_size = int(os.getenv("EMBEDDINGS_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE)))
+    chunk_overlap = int(os.getenv("EMBEDDINGS_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP)))
+
+    chunked_articles: list[dict[str, str | int]] = []
+    for article in articles:
+        chunks = split_text_into_chunks(
+            article["content"],
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        for chunk_index, chunk_text in enumerate(chunks):
+            article_id = article["id"] or "article"
+            chunked_articles.append(
+                {
+                    "id": f"{article_id}_chunk_{chunk_index}",
+                    "article_id": article["id"],
+                    "chunk_index": chunk_index,
+                    "title": article["title"],
+                    "source_url": article["source_url"],
+                    "content": chunk_text,
+                }
+            )
+
+    return chunked_articles
+
+
 async def load_articles() -> list[dict[str, str]]:
     """Load articles from the database, or fall back to local files."""
     dsn = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_DSN") or os.getenv("NEWS_DB_DSN")
@@ -132,13 +193,18 @@ async def build_index_pipeline() -> None:
     if not articles:
         raise ValueError("No articles found for embedding.")
 
-    contents = [article["content"] for article in articles]
+    chunked_articles = chunk_articles(articles)
+    print(f"Created {len(chunked_articles)} chunks")
+    if not chunked_articles:
+        raise ValueError("No chunks found for embedding.")
+
+    contents = [str(article["content"]) for article in chunked_articles]
     print("Generating embeddings...")
     embeddings = get_embeddings_batch(contents)
 
     print("Building FAISS index...")
     index = build_faiss_index(embeddings)
-    save_index(index=index, metadata=articles, save_dir=str(DEFAULT_SAVE_DIR))
+    save_index(index=index, metadata=chunked_articles, save_dir=str(DEFAULT_SAVE_DIR))
     print("Index saved to app/embeddings/vector_index/")
 
 
