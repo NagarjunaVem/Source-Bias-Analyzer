@@ -1,4 +1,4 @@
-"""FAISS index utilities for article embeddings."""
+"""Simple FAISS helpers for Stage 3."""
 
 from __future__ import annotations
 
@@ -16,18 +16,18 @@ EMBEDDING_DIMENSION = 384
 
 
 def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexFlatL2:
-    """Build an in-memory FAISS L2 index from a 2D embedding matrix."""
-    normalized = np.asarray(embeddings, dtype=np.float32)
-    if normalized.ndim != 2:
+    """Build a FAISS index from article embeddings."""
+    embeddings = np.asarray(embeddings, dtype=np.float32)
+    if embeddings.ndim != 2:
         raise ValueError("Embeddings must be a 2D array.")
 
     index = faiss.IndexFlatL2(EMBEDDING_DIMENSION)
-    index.add(normalized)
+    index.add(embeddings)
     return index
 
 
 def save_index(index: faiss.Index, metadata: list[dict], save_dir: str) -> None:
-    """Persist the FAISS index and article metadata to disk."""
+    """Save the FAISS index and metadata to disk."""
     output_dir = Path(save_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -39,7 +39,7 @@ def save_index(index: faiss.Index, metadata: list[dict], save_dir: str) -> None:
 
 
 def load_index(save_dir: str) -> tuple[faiss.Index, list[dict]]:
-    """Load a FAISS index and its metadata from disk."""
+    """Load the FAISS index and metadata from disk."""
     input_dir = Path(save_dir)
     index = faiss.read_index(str(input_dir / INDEX_FILENAME))
     metadata = json.loads((input_dir / METADATA_FILENAME).read_text(encoding="utf-8"))
@@ -52,7 +52,7 @@ def search(
     metadata: list[dict],
     top_k: int = 5,
 ) -> list[dict]:
-    """Search the index for the nearest articles to a query string."""
+    """Search for the closest articles to a query."""
     if top_k <= 0 or index.ntotal == 0:
         return []
 
