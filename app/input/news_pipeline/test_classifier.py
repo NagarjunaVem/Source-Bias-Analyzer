@@ -65,7 +65,3 @@ def classify_url(url, text=None):
             score -= 2
 
     return score >= 4
-
-while(True) :
-    url = input("enter url :")
-    print(classify_url(url))

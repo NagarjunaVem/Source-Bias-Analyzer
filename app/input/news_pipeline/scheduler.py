@@ -32,7 +32,7 @@ async def main():
     scheduler.add_job(
         run_crawler_once,
         trigger="interval",
-        seconds=10,
+        minutes=30,
         max_instances=1,
         coalesce=True,
     )

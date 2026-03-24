@@ -30,7 +30,7 @@ from news_pipeline.extractors import (
 )
 from news_pipeline.metadata_gate import MetadataGate
 from news_pipeline.models import ArticleTask, DetailedArticleRecord, DiscoveryTask, FetchTask
-
+from news_pipeline.test_classifier import classify_url
 
 class NewsCrawler:
     def __init__(self, settings: CrawlSettings | None = None) -> None:
@@ -156,7 +156,7 @@ class NewsCrawler:
         links = extract_links_from_html(text, base_url=final_url)
 
         for url, title in links:
-            if is_probable_article_url(url):
+            if is_probable_article_url(url) and classify_url(url):
                 await self.article_queue.put(
                     ArticleTask(
                         url=url,
@@ -167,7 +167,7 @@ class NewsCrawler:
                         depth=0,
                         discovered_from=final_url,
                     )
-                )
+            )
 
     async def _process_article_task(self, task: ArticleTask):
         normalized_url = canonicalize_url(task.url)
@@ -187,6 +187,10 @@ class NewsCrawler:
 
         title = str(extracted.get("headline") or task.title_hint or "").strip()
         content = str(extracted.get("content") or "").strip()
+        
+        if not classify_url(normalized_url, content):
+            self.logger.info(f"FILTERED (weak article): {normalized_url}")
+            return
 
         if len(content) < 100:
             return
