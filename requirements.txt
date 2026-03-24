@@ -4,7 +4,6 @@ nltk
 trafilatura
 readability-lxml
 chardet
-asyncpg
 apscheduler
 aiohttp
 requests

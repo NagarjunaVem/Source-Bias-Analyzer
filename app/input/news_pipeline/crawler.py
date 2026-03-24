@@ -3,34 +3,39 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from collections import defaultdict
-from datetime import datetime, timezone
 from hashlib import md5
 from pathlib import Path
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 import aiohttp
 import requests
-from dateutil import parser as dt_parser
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .db_writer import PostgresWriter
-from .config import CrawlSettings, Source, build_sources, load_settings
+from .config import CrawlSettings, build_sources, load_settings
 from .extractors import (
     canonicalize_url,
     clean_article_html,
     extract_links_from_html,
     generate_tags,
     is_probable_article_url,
-    parse_rss_entries,
     summarize_text,
 )
 from .metadata_gate import MetadataGate
-from .models import ArticleTask, DetailedArticleRecord, DiscoveryTask, FetchTask
+from .models import ArticleTask, FetchTask
 from .test_classifier import classify_url
+
+
+OUTPUT_FILE = Path(__file__).resolve().parents[3] / "data" / "articles.jsonl"
+
+
+def save_to_jsonl(record):
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 
 class NewsCrawler:
     def __init__(self, settings: CrawlSettings | None = None) -> None:
@@ -41,17 +46,14 @@ class NewsCrawler:
         self.fetch_queue = asyncio.Queue()
         self.article_queue = asyncio.Queue()
         self.discovery_queue = asyncio.Queue()
-        self.write_queue = asyncio.Queue()
         self.failed_queue = asyncio.Queue()
 
         self.stop_event = asyncio.Event()
-        self._seen_article_urls = set()
-        self._seen_discovery_urls = set()
         self._processed_article_urls = set()
         self._lock = asyncio.Lock()
 
-        self._domain_limits = {}
         self._session = None
+
         self._requests_session = requests.Session()
         self._requests_session.headers.update({"User-Agent": self.settings.user_agent})
 
@@ -72,15 +74,6 @@ class NewsCrawler:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             self._session = session
 
-            writer = PostgresWriter(
-                dsn="postgresql://postgres:12345678@localhost:5433/newsdb",
-                logger=self.logger
-            )
-
-            writer_task = asyncio.create_task(
-                writer.run(self.write_queue, self.stop_event)
-            )
-
             fetch_workers = [
                 asyncio.create_task(self._fetch_worker(i))
                 for i in range(4)
@@ -94,13 +87,12 @@ class NewsCrawler:
                 await self._run_cycle()
 
                 if run_once:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(30)
 
             finally:
                 await self.fetch_queue.join()
                 await self.article_queue.join()
                 await self.discovery_queue.join()
-                await self.write_queue.join()
                 await self.failed_queue.join()
 
                 self.stop_event.set()
@@ -109,7 +101,6 @@ class NewsCrawler:
                     t.cancel()
 
                 await asyncio.gather(*fetch_workers, *article_workers, return_exceptions=True)
-                await writer_task
 
     async def _run_cycle(self):
         sources = build_sources(self.settings.discovery_file_path)
@@ -167,7 +158,7 @@ class NewsCrawler:
                         depth=0,
                         discovered_from=final_url,
                     )
-            )
+                )
 
     async def _process_article_task(self, task: ArticleTask):
         normalized_url = canonicalize_url(task.url)
@@ -193,26 +184,27 @@ class NewsCrawler:
             return
 
         if len(content) < 100:
+            content = text[:2000]
+
+        if len(content) < 100:
             return
 
         summary = summarize_text(content)
         tags = generate_tags(title, content, [], max_tags=5) or ["news"]
 
-        record = DetailedArticleRecord(
-            id = md5(normalized_url.encode()).hexdigest(),
-            url=normalized_url,
-            title=title,
-            text=content,
-            hash=md5(content.encode()).hexdigest(),
-            source=urlparse(normalized_url).netloc,
-            published_at=None,
-            language="en",
-            tags=tags,
-            summary=summary,
-        )
+        record = {
+            "id": md5(normalized_url.encode()).hexdigest(),
+            "url": normalized_url,
+            "title": title,
+            "text": content,
+            "source": urlparse(normalized_url).netloc,
+            "summary": summary,
+            "tags": tags,
+        }
 
-        self.logger.info(f"QUEUE PUT: {normalized_url}")
-        await self.write_queue.put(record)
+        print("DEBUG: Writing article:", title[:60])
+
+        save_to_jsonl(record)
 
     async def _fetch_text(self, url: str):
         try:
