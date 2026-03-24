@@ -1,4 +1,4 @@
-"""Standalone builder for article embeddings and the FAISS index."""
+"""Simple script to build the Stage 3 FAISS index."""
 
 from __future__ import annotations
 
@@ -21,25 +21,8 @@ DEFAULT_FALLBACK_INPUT_PATH = PROJECT_ROOT / "data" / "new_articles_detailed.jso
 DEFAULT_SAVE_DIR = PROJECT_ROOT / "app" / "embeddings" / "vector_index"
 
 
-def _normalize_article(record: dict[str, Any]) -> dict[str, str] | None:
-    """Normalize raw article data into the metadata shape used by the index."""
-    content = str(record.get("content") or record.get("text") or "").strip()
-    if not content:
-        return None
-
-    article_id = str(record.get("id") or record.get("article_id") or "").strip()
-    title = str(record.get("title") or "").strip()
-    source_url = str(record.get("source_url") or record.get("url") or "").strip()
-    return {
-        "id": article_id,
-        "title": title,
-        "source_url": source_url,
-        "content": content,
-    }
-
-
 async def _load_articles_from_db(dsn: str) -> list[dict[str, str]]:
-    """Load articles from PostgreSQL using the existing shared pool factory."""
+    """Load articles from PostgreSQL."""
     pool = await get_pool(dsn)
     try:
         async with pool.acquire() as connection:
@@ -56,14 +39,22 @@ async def _load_articles_from_db(dsn: str) -> list[dict[str, str]]:
 
     articles: list[dict[str, str]] = []
     for row in rows:
-        normalized = _normalize_article(dict(row))
-        if normalized:
-            articles.append(normalized)
+        content = str(row["content"] or "").strip()
+        if not content:
+            continue
+        articles.append(
+            {
+                "id": str(row["id"] or "").strip(),
+                "title": str(row["title"] or "").strip(),
+                "source_url": str(row["source_url"] or "").strip(),
+                "content": content,
+            }
+        )
     return articles
 
 
-def _iter_json_records(path: Path) -> list[dict[str, Any]]:
-    """Read JSON or JSONL article records from a file or directory path."""
+def _load_json_records(path: Path) -> list[dict[str, Any]]:
+    """Load raw article records from a JSON or JSONL path."""
     if not path.exists():
         return []
 
@@ -101,17 +92,25 @@ def _iter_json_records(path: Path) -> list[dict[str, Any]]:
 
 
 def _load_articles_from_fallback(input_path: Path) -> list[dict[str, str]]:
-    """Load articles from a configurable JSON or JSONL fallback path."""
+    """Load articles from JSON or JSONL files."""
     articles: list[dict[str, str]] = []
-    for record in _iter_json_records(input_path):
-        normalized = _normalize_article(record)
-        if normalized:
-            articles.append(normalized)
+    for record in _load_json_records(input_path):
+        content = str(record.get("content") or record.get("text") or "").strip()
+        if not content:
+            continue
+        articles.append(
+            {
+                "id": str(record.get("id") or record.get("article_id") or "").strip(),
+                "title": str(record.get("title") or "").strip(),
+                "source_url": str(record.get("source_url") or record.get("url") or "").strip(),
+                "content": content,
+            }
+        )
     return articles
 
 
 async def load_articles() -> list[dict[str, str]]:
-    """Load articles from PostgreSQL when available, otherwise from local files."""
+    """Load articles from the database, or fall back to local files."""
     dsn = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_DSN") or os.getenv("NEWS_DB_DSN")
     fallback_path = Path(os.getenv("EMBEDDINGS_INPUT_PATH", str(DEFAULT_FALLBACK_INPUT_PATH)))
     if not fallback_path.is_absolute():
@@ -127,7 +126,7 @@ async def load_articles() -> list[dict[str, str]]:
 
 
 async def build_index_pipeline() -> None:
-    """Load articles, generate embeddings, and save the FAISS index."""
+    """Build and save the FAISS index for articles."""
     articles = await load_articles()
     print(f"Loaded {len(articles)} articles")
     if not articles:
