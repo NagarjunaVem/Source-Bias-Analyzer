@@ -27,6 +27,3 @@ def get_embeddings_batch(texts: list[str]) -> np.ndarray:
         show_progress_bar=True,
     )
     return np.asarray(embeddings, dtype=np.float32)
-
-stri = input('text: ')
-print(get_embedding(stri))

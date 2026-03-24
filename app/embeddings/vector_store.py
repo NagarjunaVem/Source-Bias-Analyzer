@@ -15,13 +15,14 @@ METADATA_FILENAME = "metadata.json"
 EMBEDDING_DIMENSION = 384
 
 
-def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexFlatL2:
-    """Build a FAISS index from article embeddings."""
+def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexFlatIP:
     embeddings = np.asarray(embeddings, dtype=np.float32)
     if embeddings.ndim != 2:
         raise ValueError("Embeddings must be a 2D array.")
 
-    index = faiss.IndexFlatL2(EMBEDDING_DIMENSION)
+    faiss.normalize_L2(embeddings)
+
+    index = faiss.IndexFlatIP(EMBEDDING_DIMENSION)
     index.add(embeddings)
     return index
 
@@ -57,6 +58,7 @@ def search(
         return []
 
     query_vector = get_embedding(query).reshape(1, -1)
+    faiss.normalize_L2(query_vector)
     distances, indices = index.search(query_vector, min(top_k, index.ntotal))
 
     results: list[dict] = []
