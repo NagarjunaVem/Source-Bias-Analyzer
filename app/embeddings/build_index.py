@@ -46,7 +46,9 @@ def load_articles() -> list[dict[str, str]]:
                 {
                     "id": str(record.get("id", "")),
                     "title": str(record.get("title", "")),
-                    "source_url": str(record.get("url") or record.get("source_url") or ""),
+                    "url": str(record.get("url"), ""),
+                    "source": str(record.get("source", "")),
+                    "scraped_at": str(record.get("scraped_at", "")),
                     "content": content,
                 }
             )
@@ -60,7 +62,9 @@ def _build_cache_key(article: dict[str, str], chunk_id: int, content: str) -> st
         [
             article["id"],
             article["title"],
-            article["source_url"],
+            article["url"],
+            article["source"],
+            article["scraped_at"],
             str(chunk_id),
             content,
         ]
@@ -79,10 +83,12 @@ def build_chunk_metadata(articles: list[dict[str, str]]) -> list[dict[str, Any]]
                 {
                     "id": article["id"],
                     "title": article["title"],
-                    "source_url": article["source_url"],
+                    "url": article["url"],
                     "content": chunk,
                     "chunk_id": chunk_id,
                     "cache_key": _build_cache_key(article, chunk_id, chunk),
+                    "scraped_at": article["scraped_at"],
+                    "source": article["source"],
                 }
             )
 
