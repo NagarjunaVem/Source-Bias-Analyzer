@@ -19,7 +19,7 @@ async def main():
 
     try:
         crawler = NewsCrawler()
-        await crawler.run(run_once=True)
+        await crawler.run(run_once= False)
         logger.info("Crawler finished successfully")
     except Exception as e:
         logger.exception(f"Crawler crashed: {e}")

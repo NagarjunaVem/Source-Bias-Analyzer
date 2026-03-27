@@ -22,38 +22,49 @@ from .extractors import (
     is_probable_article_url,
     summarize_text,
 )
-from .metadata_gate import MetadataGate
 from .models import ArticleTask, FetchTask
 from .test_classifier import classify_url
 
 
 OUTPUT_FILE = Path(__file__).resolve().parents[3] / "data" / "articles.jsonl"
+SEEN_FILE = Path(__file__).resolve().parents[3] / "data" / "seen_urls.json"
 
 
 def save_to_jsonl(record):
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-
     with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def load_seen_urls():
+    if not SEEN_FILE.exists():
+        return set()
+    try:
+        return set(json.loads(SEEN_FILE.read_text()))
+    except:
+        return set()
+
+
+def save_seen_urls(urls: set[str]):
+    SEEN_FILE.write_text(json.dumps(list(urls), indent=2))
 
 
 class NewsCrawler:
     def __init__(self, settings: CrawlSettings | None = None) -> None:
         self.settings = settings or load_settings()
         self.logger = self._build_logger()
-        self.metadata_gate = MetadataGate(self.settings.metadata_main_path, self.logger)
 
         self.fetch_queue = asyncio.Queue()
         self.article_queue = asyncio.Queue()
-        self.discovery_queue = asyncio.Queue()
-        self.failed_queue = asyncio.Queue()
 
         self.stop_event = asyncio.Event()
-        self._processed_article_urls = set()
         self._lock = asyncio.Lock()
 
         self._session = None
 
+        self._seen_urls = load_seen_urls()
+        
+        # HTTP session (retry)
         self._requests_session = requests.Session()
         self._requests_session.headers.update({"User-Agent": self.settings.user_agent})
 
@@ -84,22 +95,30 @@ class NewsCrawler:
             ]
 
             try:
-                await self._run_cycle()
-
                 if run_once:
-                    await asyncio.sleep(30)
+                    await self._run_cycle()
+                    await self.fetch_queue.join()
+                    await self.article_queue.join()
+
+                else:
+                    while True:
+                        self.logger.info("Starting new crawl cycle...")
+
+                        await self._run_cycle()
+
+                        # wait for completion
+                        await self.fetch_queue.join()
+                        await self.article_queue.join()
+
+                        # save dedup state
+                        save_seen_urls(self._seen_urls)
+                        self.logger.info("Crawl cycle completed.")
+                        await asyncio.sleep(self.settings.cycle_interval_minutes * 60)
 
             finally:
-                await self.fetch_queue.join()
-                await self.article_queue.join()
-                await self.discovery_queue.join()
-                await self.failed_queue.join()
-
                 self.stop_event.set()
-
                 for t in fetch_workers + article_workers:
                     t.cancel()
-
                 await asyncio.gather(*fetch_workers, *article_workers, return_exceptions=True)
 
     async def _run_cycle(self):
@@ -116,7 +135,7 @@ class NewsCrawler:
             )
 
     async def _fetch_worker(self, worker_id: int):
-        while not self.stop_event.is_set() or not self.fetch_queue.empty():
+        while not self.stop_event.is_set():
             try:
                 task = await asyncio.wait_for(self.fetch_queue.get(), timeout=1)
             except asyncio.TimeoutError:
@@ -128,7 +147,7 @@ class NewsCrawler:
                 self.fetch_queue.task_done()
 
     async def _article_worker(self, worker_id: int):
-        while not self.stop_event.is_set() or not self.article_queue.empty():
+        while not self.stop_event.is_set():
             try:
                 task = await asyncio.wait_for(self.article_queue.get(), timeout=1)
             except asyncio.TimeoutError:
@@ -154,9 +173,6 @@ class NewsCrawler:
                         source_name=task.source_name,
                         category=task.category,
                         title_hint=title,
-                        published_at=None,
-                        depth=0,
-                        discovered_from=final_url,
                     )
                 )
 
@@ -166,9 +182,9 @@ class NewsCrawler:
             return
 
         async with self._lock:
-            if normalized_url in self._processed_article_urls:
+            if normalized_url in self._seen_urls:
                 return
-            self._processed_article_urls.add(normalized_url)
+            self._seen_urls.add(normalized_url)
 
         text, final_url, _ = await self._fetch_text(normalized_url)
         if not text:
@@ -180,7 +196,6 @@ class NewsCrawler:
         content = str(extracted.get("content") or "").strip()
 
         if not classify_url(normalized_url, content):
-            self.logger.info(f"FILTERED (weak article): {normalized_url}")
             return
 
         if len(content) < 100:
@@ -202,8 +217,7 @@ class NewsCrawler:
             "tags": tags,
         }
 
-        print("DEBUG: Writing article:", title[:60])
-
+        self.logger.info(f"Saved: {title[:60]}")
         save_to_jsonl(record)
 
     async def _fetch_text(self, url: str):

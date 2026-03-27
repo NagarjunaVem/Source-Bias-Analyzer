@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.embeddings.embed import get_embeddings_batch
 from app.embeddings.vector_store import build_faiss_index, save_index
+from app.embeddings.chunker import chunk_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INPUT_PATH = PROJECT_ROOT / "data" / "articles.jsonl"
@@ -13,10 +14,8 @@ SAVE_DIR = PROJECT_ROOT / "app" / "embeddings" / "vector_index"
 
 
 def load_articles():
-    """Load articles from JSONL file (crawler output)."""
-
     if not INPUT_PATH.exists():
-        print(f"❌ File not found: {INPUT_PATH}")
+        print(f"File not found: {INPUT_PATH}")
         return []
 
     articles = []
@@ -53,18 +52,37 @@ async def build_index_pipeline():
         print("No articles found. Run crawler first.")
         return
 
-    contents = [article["content"] for article in articles]
+    chunked_texts = []
+    chunk_metadata = []
+
+    # chunking
+    for article in articles:
+        chunks = chunk_text(article["content"])
+
+        for i, chunk in enumerate(chunks):
+            chunked_texts.append(chunk)
+
+            chunk_metadata.append({
+                "id": article["id"],
+                "title": article["title"],
+                "source_url": article["source_url"],
+                "content": chunk,
+                "chunk_id": i
+            })
+
+    print(f"Total chunks created: {len(chunked_texts)}")
 
     print("Generating embeddings...")
-    embeddings = get_embeddings_batch(contents)
-
+    embeddings = get_embeddings_batch(chunked_texts)
     print("Building FAISS index...")
     index = build_faiss_index(embeddings)
 
     SAVE_DIR.mkdir(parents=True, exist_ok=True)
-
-    save_index(index=index, metadata=articles, save_dir=str(SAVE_DIR))
-
+    save_index(
+        index=index,
+        metadata=chunk_metadata,
+        save_dir=str(SAVE_DIR)
+    )
     print("Index saved to:", SAVE_DIR)
 
 
