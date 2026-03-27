@@ -1,8 +1,9 @@
 from app.input.loader import load_text
 from app.analysis.bias_detector import analyze_bias
-from app.embeddings.vector_store import load_index, search
+from app.retrieval.faiss_retriever import search
 
-INDEX_PATH = "app/embeddings/vector_index"
+INDEX_PATH = "app/embeddings/vector_index/articles.index"
+CHUNKS_PATH = "app/embeddings/vector_index/metadata.json"
 
 
 def build_context(results, max_chars=3000):
@@ -13,8 +14,8 @@ def build_context(results, max_chars=3000):
     context_chunks = []
 
     for r in results:
-        content = r.get("content", "")[:800]  # trim each doc
-        source = r.get("source_url", "unknown")
+        content = r.get("text", "")[:800]  # trim each doc
+        source = r.get("url", "unknown")
 
         chunk = f"[Source: {source}]\n{content}"
         context_chunks.append(chunk)
@@ -28,16 +29,11 @@ def main():
     # 1. Load article input
     article = load_text()
 
-    print("\nLoading vector index...\n")
+    print("\nLoading retrieval index...\n")
 
-    # 2. Load FAISS index
-    index, metadata = load_index(INDEX_PATH)
-
-    print(f"Index loaded with {len(metadata)} articles")
-
-    # 3. Retrieve similar articles (RAG)
+    # 2. Retrieve similar articles (RAG)
     print("\nRetrieving related sources...\n")
-    results = search(article, index, metadata, top_k=5)
+    results = search(article, INDEX_PATH, CHUNKS_PATH, top_k=5)
 
     if not results:
         print("No related sources found. Proceeding without RAG context.\n")
