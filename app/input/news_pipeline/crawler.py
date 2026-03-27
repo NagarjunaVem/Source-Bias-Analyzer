@@ -12,6 +12,7 @@ import aiohttp
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from datetime import datetime, timezone
 
 from .config import CrawlSettings, build_sources, load_settings
 from .extractors import (
@@ -215,6 +216,7 @@ class NewsCrawler:
             "source": urlparse(normalized_url).netloc,
             "summary": summary,
             "tags": tags,
+            "scraped_at": datetime.now(timezone.utc).isoformat()
         }
 
         self.logger.info(f"Saved: {title[:60]}")
