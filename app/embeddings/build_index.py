@@ -44,11 +44,11 @@ def load_articles() -> list[dict[str, str]]:
 
             articles.append(
                 {
-                    "id": str(record.get("id", "")),
-                    "title": str(record.get("title", "")),
-                    "url": str(record.get("url"), ""),
-                    "source": str(record.get("source", "")),
-                    "scraped_at": str(record.get("scraped_at", "")),
+                    "id": record.get("id", ""),
+                    "title": record.get("title", ""),
+                    "url": record.get("url", ""),
+                    "source": record.get("source", ""),
+                    "scraped_at": record.get("scraped_at", ""),
                     "content": content,
                 }
             )
