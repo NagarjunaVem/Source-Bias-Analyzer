@@ -12,30 +12,33 @@ from .embed import get_embedding
 
 INDEX_FILENAME = "articles.index"
 METADATA_FILENAME = "metadata.json"
-
+EMBEDDINGS_FILENAME = "embeddings.npy"
 
 
 def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexFlatIP:
+    """Build a cosine-similarity FAISS index from a 2D numpy array."""
     embeddings = np.asarray(embeddings, dtype=np.float32)
     if embeddings.ndim != 2:
         raise ValueError("Embeddings must be a 2D array.")
-
     if embeddings.shape[0] == 0:
         raise ValueError("No embeddings provided.")
-    
+
     dimension = embeddings.shape[1]
-    # Normalize for cosine similarity
     faiss.normalize_L2(embeddings)
 
     index = faiss.IndexFlatIP(dimension)
     index.add(embeddings)
-
     print(f"FAISS index built with {index.ntotal} vectors")
     return index
 
 
-def save_index(index: faiss.Index, metadata: list[dict], save_dir: str) -> None:
-    """Save FAISS index + metadata."""
+def save_index(
+    index: faiss.Index,
+    metadata: list[dict],
+    save_dir: str,
+    embeddings: np.ndarray | None = None,
+) -> None:
+    """Save the FAISS index, metadata, and optional numpy embedding cache."""
     output_dir = Path(save_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -47,12 +50,18 @@ def save_index(index: faiss.Index, metadata: list[dict], save_dir: str) -> None:
         json.dumps(metadata, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(f"Index saved → {index_path}")
-    print(f"Metadata saved → {metadata_path}")
+
+    if embeddings is not None:
+        np.save(output_dir / EMBEDDINGS_FILENAME, np.asarray(embeddings, dtype=np.float32))
+
+    print(f"Index saved -> {index_path}")
+    print(f"Metadata saved -> {metadata_path}")
+    if embeddings is not None:
+        print(f"Embedding cache saved -> {output_dir / EMBEDDINGS_FILENAME}")
 
 
 def load_index(save_dir: str) -> tuple[faiss.Index, list[dict]]:
-    """Load FAISS index + metadata safely."""
+    """Load the FAISS index and metadata."""
     input_dir = Path(save_dir)
     index_path = input_dir / INDEX_FILENAME
     metadata_path = input_dir / METADATA_FILENAME
@@ -65,13 +74,27 @@ def load_index(save_dir: str) -> tuple[faiss.Index, list[dict]]:
     return index, metadata
 
 
+def load_embedding_cache(save_dir: str) -> tuple[np.ndarray, list[dict]]:
+    """Load the saved numpy embeddings and aligned metadata."""
+    input_dir = Path(save_dir)
+    embeddings_path = input_dir / EMBEDDINGS_FILENAME
+    metadata_path = input_dir / METADATA_FILENAME
+
+    if not embeddings_path.exists() or not metadata_path.exists():
+        return np.empty((0, 0), dtype=np.float32), []
+
+    embeddings = np.load(embeddings_path)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return np.asarray(embeddings, dtype=np.float32), metadata
+
+
 def search(
     query: str,
     index: faiss.Index,
     metadata: list[dict],
     top_k: int = 5,
 ) -> list[dict]:
-    """Search similar articles."""
+    """Search similar chunk records."""
     if not query or top_k <= 0 or index.ntotal == 0:
         return []
 
@@ -80,8 +103,8 @@ def search(
     faiss.normalize_L2(query_vector)
     distances, indices = index.search(query_vector, min(top_k, index.ntotal))
 
-    results = []
-    for score, idx in zip(distances[0], indices[0]):
+    results: list[dict] = []
+    for score, idx in zip(distances[0], indices[0], strict=False):
         if idx < 0 or idx >= len(metadata):
             continue
         item = dict(metadata[idx])
