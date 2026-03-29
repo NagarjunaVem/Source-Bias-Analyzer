@@ -50,7 +50,7 @@ class CrawlSettings:
 SEED_SOURCE_DEFINITIONS: list[dict[str, str]] = [
 
     # ── Indian News — Web ──────────────────────────────────────────────────────
-    {"name": "ndtv",                "url": "https://www.ndtv.com/latest",                           "source_type": "web", "category": "india"},
+    # {"name": "ndtv",                "url": "https://www.ndtv.com/latest",                           "source_type": "web", "category": "india"},
     {"name": "times_of_india",      "url": "https://timesofindia.indiatimes.com/news",               "source_type": "web", "category": "india"},
     {"name": "the_hindu",           "url": "https://www.thehindu.com/news/",                         "source_type": "web", "category": "india"},
     {"name": "hindustan_times",     "url": "https://www.hindustantimes.com/latest-news",             "source_type": "web", "category": "india"},
@@ -81,7 +81,7 @@ SEED_SOURCE_DEFINITIONS: list[dict[str, str]] = [
     {"name": "guardian_rss",        "url": "https://www.theguardian.com/world/rss",                 "source_type": "rss", "category": "world"},
     {"name": "ap_rss",              "url": "https://feeds.apnews.com/rss/apf-topnews",              "source_type": "rss", "category": "world"},
     {"name": "npr_rss",             "url": "https://feeds.npr.org/1001/rss.xml",                    "source_type": "rss", "category": "world"},
-    {"name": "france24_rss",        "url": "https://www.france24.com/en/rss",                       "source_type": "rss", "category": "world"},
+    # {"name": "france24_rss",        "url": "https://www.france24.com/en/rss",                       "source_type": "rss", "category": "world"},
 
     # ── Technology — RSS ──────────────────────────────────────────────────────
     {"name": "techcrunch_rss",      "url": "https://techcrunch.com/feed/",                          "source_type": "rss", "category": "technology"},
