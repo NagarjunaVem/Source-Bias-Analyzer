@@ -125,17 +125,48 @@ def summarize_chunk(text: str) -> str:
 
 
 def summarize_retrieved_chunks(results: list[dict]) -> str:
-    """Deduplicate, summarize, and combine retrieved chunks into one context string."""
+    """Deduplicate chunks, rebuild article-level context, and summarize each source article."""
     # First remove near-identical retrieved chunks so duplicate content is summarized only once.
     unique_results = deduplicate_chunks(results)
 
-    # Summarize each remaining chunk and prepend source metadata for the analysis agent.
-    summaries: list[str] = []
+    # Group surviving chunks back into their originating article using source, title, and URL.
+    grouped_articles: dict[tuple[str, str, str], dict] = {}
+    article_order: list[tuple[str, str, str]] = []
     for result in unique_results:
-        truncated_text = str(result.get("text", ""))[:800]
-        summary = summarize_chunk(truncated_text)
+        article_key = (
+            str(result.get("website_name", "")),
+            str(result.get("title", "")),
+            str(result.get("url", "")),
+        )
+        if article_key not in grouped_articles:
+            grouped_articles[article_key] = {
+                "website_name": result["website_name"],
+                "title": result["title"],
+                "url": result["url"],
+                "score": float(result.get("score", 0.0)),
+                "chunks": [],
+            }
+            article_order.append(article_key)
+
+        grouped_articles[article_key]["score"] = max(
+            grouped_articles[article_key]["score"],
+            float(result.get("score", 0.0)),
+        )
+        grouped_articles[article_key]["chunks"].append(result)
+
+    # Summarize each reconstructed article instead of each individual chunk.
+    summaries: list[str] = []
+    for article_key in article_order:
+        article = grouped_articles[article_key]
+        ordered_chunks = sorted(
+            article["chunks"],
+            key=lambda chunk: (int(chunk.get("chunk_id", 0)), -float(chunk.get("score", 0.0))),
+        )
+        article_text = " ".join(str(chunk.get("text", "")) for chunk in ordered_chunks).strip()
+        article_text = article_text[:2400]
+        summary = summarize_chunk(article_text)
         summaries.append(
-            f"[{result['website_name']} | {result['title']} | Score: {result['score']:.2f}]\n{summary}"
+            f"[{article['website_name']} | {article['title']} | Score: {article['score']:.2f}]\n{summary}"
         )
 
     # Join all summaries into one combined context string for the downstream analysis step.
@@ -155,17 +186,16 @@ if __name__ == "__main__":
         },
         {
             "chunk_id": 2,
-            "text": "Government economic policies were announced today. Unemployment fell to 3.2 percent according to officials...",
-            "title": "Economy News",
-            "url": "https://reuters.com/economy",
+            "text": "Officials added that the policy package also targeted borrowing costs and consumer prices over the next quarter...",
+            "title": "Economic Policy Update",
+            "url": "https://bbc.com/news/economy",
             "scraped_date": "2024-01-15",
-            "score": 0.81,
-            "website_name": "Reuters"
+            "score": 0.84,
+            "website_name": "BBC"
         }
     ]
     context = summarize_retrieved_chunks(dummy_results)
     print(context)
-    # chunk 2 has 90%+ overlap with chunk 1
-    # chunk 1 kept (higher score 0.87 vs 0.81)
-    # chunk 2 dropped
-    # only chunk 1 summarized strictly from its text only
+    # Both retrieved chunks belong to the same original article.
+    # The summarizer rebuilds article text from the retrieved chunks first.
+    # Then it summarizes the reconstructed source article as one unit.
