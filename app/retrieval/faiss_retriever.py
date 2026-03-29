@@ -8,8 +8,7 @@ from typing import Any
 
 import faiss
 import numpy as np
-
-from app.embeddings.embed import get_embedding
+from langchain_community.embeddings import OllamaEmbeddings
 
 
 def _rebuild_index_for_cosine(index: faiss.Index) -> faiss.IndexFlatIP:
@@ -43,14 +42,19 @@ def load_faiss_index(index_path: str) -> faiss.Index:
     # Step 2: ensure the index is compatible with cosine similarity search.
     index = _rebuild_index_for_cosine(index)
 
-    # Try GPU first, then gracefully fall back to CPU for any failure.
-    try:
-        res = faiss.StandardGpuResources()
-        gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
-        print("FAISS running on GPU")
-        return gpu_index
-    except Exception as e:
-        print(f"GPU not available, falling back to CPU. Reason: {e}")
+    # Check whether faiss-gpu is available before attempting GPU transfer.
+    if hasattr(faiss, "StandardGpuResources"):
+        try:
+            res = faiss.StandardGpuResources()
+            gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
+            print("FAISS running on GPU")
+            return gpu_index
+        except Exception as e:
+            print(f"GPU transfer failed, falling back to CPU. Reason: {e}")
+            return index
+    else:
+        print("faiss-gpu not installed, running on CPU.")
+        print("To enable GPU: pip uninstall faiss-cpu && pip install faiss-gpu")
         return index
 
 
@@ -134,9 +138,20 @@ def search(
     if not query or top_k <= 0:
         return []
 
-    query_vector = get_embedding(query).reshape(1, -1).astype(np.float32)
+    try:
+        # Ollama must be running locally and the nomic model must be pulled first.
+        embedder = OllamaEmbeddings(model="nomic-embed-text")
+        query_vector = embedder.embed_query(query)
+        query_embedding = np.array([query_vector]).astype("float32")
+    except Exception:
+        print(
+            "Ollama not running or nomic-embed-text model not pulled.\n"
+            "Run: ollama pull nomic-embed-text"
+        )
+        return []
+
     return retrieve_similar_chunks(
-        query_embedding=query_vector,
+        query_embedding=query_embedding,
         index_path=str(index_path),
         chunks_path=str(chunks_path),
         top_k=top_k,
@@ -145,7 +160,7 @@ def search(
 
 
 if __name__ == "__main__":
-    dummy_embedding = np.random.rand(1, 384).astype("float32")
+    dummy_embedding = np.random.rand(1, 768).astype("float32")
     results = retrieve_similar_chunks(dummy_embedding)
     for r in results:
         print(f"Chunk ID: {r['chunk_id']}")
