@@ -1,4 +1,10 @@
-from app.input.news_pipeline.scheduler import main
+"""
+scraper.py
+----------
+Entry point to run the news scraping pipeline.
+Run from project root:  python -m app.input.scraper
+"""
+from news_pipeline.scheduler import main
 import asyncio
 
 if __name__ == "__main__":

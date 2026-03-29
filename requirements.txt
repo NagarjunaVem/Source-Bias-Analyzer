@@ -12,7 +12,10 @@ lxml
 feedparser
 python-dateutil
 python-dotenv
-sentence-transformers
 faiss-cpu
 numpy
-torch
+langchain-ollama
+tqdm
+streamlit
+fitz
+pymupdf
