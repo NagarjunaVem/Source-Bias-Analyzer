@@ -9,12 +9,19 @@ from tqdm import tqdm
 MODEL_NAME = "nomic-embed-text"
 MODEL = OllamaEmbeddings(model=MODEL_NAME)
 BATCH_SIZE = 32
+MAX_EMBED_CHARS = 4000
 print(f"Embedding model loaded: {MODEL_NAME}")
+
+
+def _prepare_text(text: str) -> str:
+    """Trim text to a safe size so Ollama embeddings stay within context length."""
+    normalized = " ".join(str(text).split())
+    return normalized[:MAX_EMBED_CHARS]
 
 
 def get_embedding(text: str) -> np.ndarray:
     """Return one embedding vector for one text."""
-    embedding = MODEL.embed_query(text)
+    embedding = MODEL.embed_query(_prepare_text(text))
     return np.asarray(embedding, dtype=np.float32)
 
 
@@ -29,8 +36,12 @@ def get_embeddings_batch(texts: list[str]) -> np.ndarray:
         desc="Embedding chunks",
         unit="batch",
     ):
-        batch = texts[start : start + BATCH_SIZE]
-        batch_embeddings = MODEL.embed_documents(batch)
+        batch = [_prepare_text(text) for text in texts[start : start + BATCH_SIZE]]
+        try:
+            batch_embeddings = MODEL.embed_documents(batch)
+        except Exception as error:
+            print(f"Batch embedding failed, retrying one-by-one. Reason: {error}")
+            batch_embeddings = [MODEL.embed_query(text) for text in batch]
         all_embeddings.extend(batch_embeddings)
 
     return np.asarray(all_embeddings, dtype=np.float32)
