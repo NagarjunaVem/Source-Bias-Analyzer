@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+# Automatically search up the folder tree to find the .env file
+load_dotenv(find_dotenv())
 
 
 @dataclass(frozen=True, slots=True)
