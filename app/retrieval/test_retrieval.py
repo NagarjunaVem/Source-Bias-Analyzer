@@ -1,17 +1,15 @@
-"""Manual retrieval test for pasting a user article and inspecting top-k matches."""
+"""Manual test for multi-site retrieval."""
 
 from __future__ import annotations
 
-from app.embeddings.embed import get_embedding
 from app.retrieval.faiss_retriever import retrieve_similar_chunks
 
-INDEX_PATH = "app/embeddings/vector_index/articles.index"
-CHUNKS_PATH = "app/embeddings/vector_index/metadata.json"
+BASE_DIR = "app/embeddings/vector_index"
 
 
-def _read_article_input() -> str:
-    """Read a pasted article from stdin until the user submits a blank line."""
-    print("\nPaste the user article below.")
+def _read_query() -> str:
+    """Read a query article or sentence from stdin until a blank line is entered."""
+    print("\nPaste the article or query text below.")
     print("Press Enter on an empty line when you are done.\n")
 
     lines: list[str] = []
@@ -25,38 +23,34 @@ def _read_article_input() -> str:
 
 
 def main() -> None:
-    """Embed the pasted article and print the top-k retrieved chunks."""
-    article_text = _read_article_input()
-    if not article_text:
-        print("No article text provided.")
+    """Run multi-site retrieval and print the final reranked results."""
+    query_text = _read_query()
+    if not query_text:
+        print("No query text provided.")
         return
 
-    print("\nGenerating embedding for the input article...\n")
-    query_embedding = get_embedding(article_text).reshape(1, -1)
-
-    print("Running retrieval...\n")
+    print("\nRunning retrieval across all site indexes...\n")
     results = retrieve_similar_chunks(
-        query_embedding=query_embedding,
-        index_path=INDEX_PATH,
-        chunks_path=CHUNKS_PATH,
-        top_k=5,
-        threshold=0.5,
+        query_text=query_text,
+        base_dir=BASE_DIR,
+        top_k_per_site=5,
+        top_k_final=10,
+        threshold=0.3,
     )
 
     if not results:
         print("No similar chunks were retrieved.")
         return
 
-    print(f"Retrieved {len(results)} chunk(s).\n")
+    print(f"Retrieved {len(results)} final result(s).\n")
     for rank, result in enumerate(results, 1):
-        print(f"Rank: {rank}")
-        print(f"Chunk ID: {result['chunk_id']}")
-        print(f"Website: {result['website_name']}")
-        print(f"Title: {result['title']}")
-        print(f"URL: {result['url']}")
-        print(f"Scraped Date: {result['scraped_date']}")
-        print(f"Score: {result['score']:.4f}")
-        print(f"Text Preview: {result['text'][:250]}")
+        print(f"Rank    : {rank}")
+        print(f"Site    : {result['website_name']}")
+        print(f"Title   : {result['title']}")
+        print(f"Score   : {result['score']:.4f}")
+        print(f"URL     : {result['url']}")
+        print(f"Scraped : {result['scraped_date']}")
+        print(f"Text    : {result['text'][:250]}")
         print("---")
 
 
