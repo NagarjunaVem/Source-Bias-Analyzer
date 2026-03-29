@@ -16,3 +16,6 @@ faiss-cpu
 numpy
 langchain-ollama
 tqdm
+streamlit
+fitz
+pymupdf
