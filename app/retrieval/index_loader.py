@@ -8,6 +8,7 @@ import os
 import faiss
 from rank_bm25 import BM25Okapi
 
+
 def ensure_cosine_index(index):
     """Ensure the FAISS index uses inner product on normalized vectors."""
     if not isinstance(index, faiss.IndexFlatIP):
@@ -42,26 +43,34 @@ def load_all_indexes(base_dir: str) -> list[dict]:
             print(f"Skipping {site}: missing files")
             continue
 
-        index = faiss.read_index(index_path)
-        index = ensure_cosine_index(index)
+        try:
+            index = faiss.read_index(index_path)
+            index = ensure_cosine_index(index)
 
-        with open(metadata_path, "r", encoding="utf-8") as file_handle:
-            metadata = json.load(file_handle)
+            with open(metadata_path, "r", encoding="utf-8") as file_handle:
+                metadata = json.load(file_handle)
 
-        corpus = [
-            str(chunk.get("text", chunk.get("content", ""))).lower().split()
-            for chunk in metadata
-        ]
-        bm25 = BM25Okapi(corpus)
+            if not isinstance(metadata, list) or not metadata:
+                print(f"Skipping {site}: metadata is empty or invalid")
+                continue
 
-        loaded_sites.append(
-            {
-                "site": site,
-                "index": index,
-                "metadata": metadata,
-                "bm25": bm25,
-            }
-        )
+            corpus = [
+                str(chunk.get("text", chunk.get("content", ""))).lower().split()
+                for chunk in metadata
+            ]
+            bm25 = BM25Okapi(corpus)
+
+            loaded_sites.append(
+                {
+                    "site": site,
+                    "index": index,
+                    "metadata": metadata,
+                    "bm25": bm25,
+                }
+            )
+        except Exception as error:
+            print(f"Skipping {site}: failed to load index bundle. Reason: {error}")
+            continue
 
     print(f"Loaded {len(loaded_sites)} site indexes successfully")
     return loaded_sites

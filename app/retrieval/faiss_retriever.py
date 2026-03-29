@@ -2,35 +2,117 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import faiss
 import numpy as np
 from langchain_ollama import OllamaEmbeddings
+from ollama import ResponseError
 
 from app.retrieval.constants import TOP_K_FINAL_MAX
 from app.retrieval.cross_encoder_reranker import cross_encoder_rerank
 from app.retrieval.empty_results import handle_empty_results
-from app.retrieval.hybrid_search import search_all_sites_hybrid
+from app.retrieval.hybrid_search import search_all_sites_bm25_only, search_all_sites_hybrid
 from app.retrieval.index_loader import load_all_indexes
 from app.retrieval.query_planner import diversify_results, filter_results, filter_site_indexes, plan_retrieval
 from app.retrieval.weighting import apply_credibility_weight, apply_recency_weight
+
+RETRIEVAL_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "if", "then", "than", "that", "this", "these", "those", "is", "are",
+    "was", "were", "be", "been", "being", "to", "of", "in", "on", "for", "from", "by", "with", "as", "at",
+    "it", "its", "their", "they", "them", "he", "she", "his", "her", "you", "your", "we", "our", "will", "would",
+    "could", "should", "may", "might", "said", "says", "reported", "reports", "about", "after", "before", "during",
+    "over", "under", "into", "also", "more", "most", "very",
+}
+MIN_RELEVANCE_OVERLAP = 2
+MIN_TITLE_OVERLAP = 1
+LOW_SIGNAL_TITLE_PATTERNS = (
+    "daily briefing",
+    "morning briefing",
+    "newsletter",
+    "live updates",
+    "podcast",
+    "horoscope",
+)
+QUERY_MAX_EMBED_CHARS = 2500
+QUERY_MIN_EMBED_CHARS = 400
+
+
+def _is_ollama_runner_failure(error: Exception) -> bool:
+    """Detect common Ollama runner crashes so we can degrade gracefully."""
+    message = str(error).lower()
+    return (
+        "llama runner process has terminated" in message
+        or "status code: 500" in message
+        or "ollama" in message and "terminated" in message
+    )
+
+
+def _tokenize_for_relevance(text: str) -> set[str]:
+    return {
+        token for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", str(text).lower())
+        if token not in RETRIEVAL_STOPWORDS and len(token) > 2
+    }
+
+
+def _prepare_query_text(query_text: str) -> str:
+    """Normalize and trim the query to a safe initial embedding length."""
+    normalized_query = " ".join(str(query_text).split())
+    return normalized_query[:QUERY_MAX_EMBED_CHARS]
+
+
+def _filter_irrelevant_results(query_text: str, results: list[dict]) -> list[dict]:
+    """Drop obviously off-topic retrieval results before analysis consumes them."""
+    query_tokens = _tokenize_for_relevance(query_text)
+    if not query_tokens:
+        return results
+
+    filtered_results: list[dict] = []
+    for result in results:
+        title_text = str(result.get("title", "")).strip()
+        lowered_title = title_text.lower()
+        if any(pattern in lowered_title for pattern in LOW_SIGNAL_TITLE_PATTERNS):
+            continue
+
+        title_tokens = _tokenize_for_relevance(title_text)
+        text_tokens = _tokenize_for_relevance(str(result.get("text", ""))[:500])
+        title_overlap = len(query_tokens & title_tokens)
+        text_overlap = len(query_tokens & text_tokens)
+        overlap = len(query_tokens & (title_tokens | text_tokens))
+        if title_overlap >= MIN_TITLE_OVERLAP or overlap >= max(MIN_RELEVANCE_OVERLAP, 3) or text_overlap >= 4:
+            filtered_results.append(result)
+
+    if filtered_results:
+        print(f"Relevance filter kept {len(filtered_results)} of {len(results)} results")
+        return filtered_results
+
+    print("Relevance filter removed all results; returning original candidate set")
+    return results
 
 
 def embed_query(query_text: str) -> np.ndarray:
     """Embed the user query with nomic-embed-text and normalize it for cosine search."""
     try:
         embedder = OllamaEmbeddings(model="nomic-embed-text")
-        normalized_query = " ".join(str(query_text).split())
-        query_vector = embedder.embed_query(normalized_query[:2000])
+        candidate = _prepare_query_text(query_text)
+        while True:
+            try:
+                query_vector = embedder.embed_query(candidate)
+                break
+            except ResponseError as error:
+                message = str(error).lower()
+                if "input length exceeds the context length" not in message:
+                    raise
+                if len(candidate) <= QUERY_MIN_EMBED_CHARS:
+                    raise
+                next_length = max(QUERY_MIN_EMBED_CHARS, int(len(candidate) * 0.7))
+                candidate = candidate[:next_length]
         query_embedding = np.array([query_vector]).astype("float32")
         faiss.normalize_L2(query_embedding)
         return query_embedding
     except Exception as error:
-        print(
-            "Ollama not running or nomic-embed-text not pulled.\n"
-            "Run: ollama pull nomic-embed-text"
-        )
+        print("Query embedding failed; Ollama embedding runner may be unavailable or unstable.")
         raise RuntimeError("Query embedding failed") from error
 
 
@@ -39,6 +121,8 @@ def retrieve_similar_chunks(
     base_dir: str = "app/embeddings/vector_index",
 ) -> list[dict]:
     """Run the full hybrid retrieval pipeline and return the best final chunks."""
+    retrieval_plan: dict | None = None
+    site_indexes: list[dict] = []
     try:
         retrieval_plan = plan_retrieval(query_text)
         print(f"Retrieval plan: {retrieval_plan}")
@@ -52,8 +136,12 @@ def retrieve_similar_chunks(
             print("No site indexes matched the retrieval plan.")
             return []
 
-        query_embedding = embed_query(query_text)
-        all_results = search_all_sites_hybrid(site_indexes, query_embedding, query_text)
+        try:
+            query_embedding = embed_query(query_text)
+            all_results = search_all_sites_hybrid(site_indexes, query_embedding, query_text)
+        except RuntimeError:
+            print("Falling back to BM25-only retrieval because query embedding failed.")
+            all_results = search_all_sites_bm25_only(site_indexes, query_text)
         all_results = handle_empty_results(all_results, query_text)
         if not all_results:
             return []
@@ -69,8 +157,27 @@ def retrieve_similar_chunks(
         final_results = cross_encoder_rerank(query_text, all_results)
         if retrieval_plan.get("diversity_required", False):
             final_results = diversify_results(final_results, TOP_K_FINAL_MAX)
+        final_results = _filter_irrelevant_results(query_text, final_results)
         return final_results
     except Exception as error:
+        if _is_ollama_runner_failure(error) and site_indexes:
+            print("Ollama runner became unavailable; retrying retrieval with BM25 fallback.")
+            try:
+                fallback_results = search_all_sites_bm25_only(site_indexes, query_text)
+                fallback_results = handle_empty_results(fallback_results, query_text)
+                if not fallback_results:
+                    return []
+                if retrieval_plan is not None:
+                    fallback_results = filter_results(fallback_results, retrieval_plan) or fallback_results
+                    if retrieval_plan.get("credibility_priority", True):
+                        fallback_results = apply_credibility_weight(fallback_results)
+                    if retrieval_plan.get("diversity_required", False):
+                        fallback_results = diversify_results(fallback_results, TOP_K_FINAL_MAX)
+                fallback_results = _filter_irrelevant_results(query_text, fallback_results)
+                print(f"BM25 fallback recovered {len(fallback_results)} results")
+                return fallback_results
+            except Exception as fallback_error:
+                print(f"BM25 fallback also failed: {fallback_error}")
         print(f"Failed to retrieve similar chunks: {error}")
         return []
 

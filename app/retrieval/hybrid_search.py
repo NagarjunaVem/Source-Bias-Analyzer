@@ -1,8 +1,6 @@
-"""Hybrid FAISS + BM25 search helpers with timeout handling."""
+"""Hybrid FAISS + BM25 search helpers."""
 
 from __future__ import annotations
-
-import threading
 
 import numpy as np
 
@@ -95,28 +93,49 @@ def search_single_site(site: dict, query_embedding: np.ndarray, query_text: str,
     return site_results
 
 
+def search_single_site_bm25_only(site: dict, query_text: str, top_k: int) -> list[dict]:
+    """Run a BM25-only search for one site when embeddings are unavailable."""
+    site_threshold = get_adaptive_threshold(site["site"])
+    query_tokens = query_text.lower().split()
+    bm25_scores = np.asarray(site["bm25"].get_scores(query_tokens), dtype=np.float32)
+    if not len(bm25_scores):
+        return []
+
+    bm25_top_k = min(TOP_K_BM25, len(bm25_scores))
+    bm25_top_indices = np.argsort(bm25_scores)[::-1][:bm25_top_k]
+    bm25_max = float(np.max(bm25_scores)) if float(np.max(bm25_scores)) > 0 else 1.0
+    bm25_normalized = bm25_scores / bm25_max
+
+    site_results: list[dict] = []
+    for idx in bm25_top_indices:
+        idx = int(idx)
+        if idx < 0 or idx >= len(site["metadata"]):
+            continue
+        final_score = float(bm25_normalized[idx])
+        if final_score < max(0.15, site_threshold - 0.10):
+            continue
+        site_results.append(
+            _build_result_from_chunk(
+                site=site,
+                idx=idx,
+                score=final_score,
+                search_type="bm25_fallback",
+                threshold_used=max(0.15, site_threshold - 0.10),
+            )
+        )
+
+    site_results = sorted(site_results, key=lambda item: item["score"], reverse=True)[:top_k]
+    print(f"{site['site']}: {len(site_results)} BM25 fallback results found")
+    return site_results
+
+
 def search_site_with_timeout(site, query_embedding, query_text, top_k, timeout_seconds=10):
-    """Search one site with timeout protection so one failing site cannot crash the pipeline."""
-    result_container: list[dict] = []
-    error_container: list[Exception] = []
-
-    def _run_search() -> None:
-        try:
-            result_container.extend(search_single_site(site, query_embedding, query_text, top_k))
-        except Exception as error:
-            error_container.append(error)
-
-    worker = threading.Thread(target=_run_search, daemon=True)
-    worker.start()
-    worker.join(timeout_seconds)
-
-    if worker.is_alive():
-        print(f"{site['site']}: search timed out after {timeout_seconds}s, skipping")
+    """Search one site safely without leaving runaway background threads behind."""
+    try:
+        return search_single_site(site, query_embedding, query_text, top_k)
+    except Exception as error:
+        print(f"{site['site']}: search failed. Reason: {error}")
         return []
-    if error_container:
-        print(f"{site['site']}: search failed. Reason: {error_container[0]}")
-        return []
-    return result_container
 
 
 def search_all_sites_hybrid(
@@ -135,6 +154,20 @@ def search_all_sites_hybrid(
             timeout_seconds=10,
         )
         all_results.extend(site_results)
+
+    all_results = sorted(all_results, key=lambda item: item["score"], reverse=True)[:TOP_K_COMBINED]
+    return all_results
+
+
+def search_all_sites_bm25_only(site_indexes: list[dict], query_text: str) -> list[dict]:
+    """Run BM25-only retrieval across every site and keep the combined top pool."""
+    all_results: list[dict] = []
+    for site in site_indexes:
+        try:
+            site_results = search_single_site_bm25_only(site=site, query_text=query_text, top_k=TOP_K_PER_SITE)
+            all_results.extend(site_results)
+        except Exception as error:
+            print(f"{site['site']}: BM25 fallback search failed. Reason: {error}")
 
     all_results = sorted(all_results, key=lambda item: item["score"], reverse=True)[:TOP_K_COMBINED]
     return all_results

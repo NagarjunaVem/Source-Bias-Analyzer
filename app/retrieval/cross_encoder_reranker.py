@@ -45,10 +45,14 @@ def cross_encoder_rerank(
         return results
 
     candidate_results = sorted(results, key=lambda item: item["score"], reverse=True)[:TOP_K_COMBINED]
-    embedder = _get_rerank_embedder()
-    query_embedding = np.asarray(embedder.embed_query(" ".join(query_text.split())[:2000]), dtype=np.float32)
-    document_texts = [" ".join(str(result["text"]).split())[:1200] for result in candidate_results]
-    document_embeddings = np.asarray(embedder.embed_documents(document_texts), dtype=np.float32)
+    try:
+        embedder = _get_rerank_embedder()
+        query_embedding = np.asarray(embedder.embed_query(" ".join(query_text.split())[:2000]), dtype=np.float32)
+        document_texts = [" ".join(str(result["text"]).split())[:1200] for result in candidate_results]
+        document_embeddings = np.asarray(embedder.embed_documents(document_texts), dtype=np.float32)
+    except Exception as error:
+        print("Ollama rerank unavailable; using score-sorted candidates instead.")
+        return candidate_results[:top_k_max]
 
     query_embedding = query_embedding.reshape(1, -1)
     query_embedding = _normalize_rows(query_embedding)
