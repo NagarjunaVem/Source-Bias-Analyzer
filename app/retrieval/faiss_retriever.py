@@ -1,123 +1,191 @@
-"""FAISS retrieval helpers kept separate from embedding generation."""
+"""Multi-site FAISS retrieval helpers."""
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-from typing import Any
 
 import faiss
 import numpy as np
+from langchain_ollama import OllamaEmbeddings
 
-from app.embeddings.embed import get_embedding
+from app.retrieval.reranker import rerank_results
 
 
-def _rebuild_index_for_cosine(index: faiss.Index) -> faiss.IndexFlatIP:
-    """Rebuild a CPU FAISS index as IndexFlatIP using L2-normalized vectors."""
-    if isinstance(index, faiss.IndexFlatIP):
-        return index
-
-    print("Warning: Index is not IndexFlatIP. Rebuilding for cosine similarity...")
-
-    # Reconstruct all stored vectors so we can rebuild the index
-    # as an inner-product index for cosine similarity search.
-    if hasattr(index, "get_xb"):
-        all_vectors = faiss.rev_swig_ptr(index.get_xb(), index.ntotal * index.d)
-        all_vectors = all_vectors.reshape(index.ntotal, index.d).copy()
+def load_index_with_gpu(index, site_name: str):
+    """Move an index to GPU when faiss-gpu is available, otherwise keep CPU."""
+    # Always check for the GPU FAISS symbols first so faiss-cpu does not crash here.
+    if hasattr(faiss, "StandardGpuResources"):
+        try:
+            res = faiss.StandardGpuResources()
+            gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
+            print(f"{site_name}: running on GPU")
+            return gpu_index
+        except Exception as e:
+            # GPU transfer can fail because of CUDA issues or memory pressure.
+            print(f"{site_name}: GPU failed, using CPU. Reason: {e}")
+            return index
     else:
-        all_vectors = np.empty((index.ntotal, index.d), dtype=np.float32)
-        for row in range(index.ntotal):
-            all_vectors[row] = index.reconstruct(row)
-
-    faiss.normalize_L2(all_vectors)
-    new_index = faiss.IndexFlatIP(index.d)
-    new_index.add(all_vectors)
-    return new_index
-
-
-def load_faiss_index(index_path: str) -> faiss.Index:
-    """Load a FAISS index, make it cosine-ready, and try GPU first."""
-    # Step 1: load the saved FAISS index from disk.
-    index = faiss.read_index(index_path)
-
-    # Step 2: ensure the index is compatible with cosine similarity search.
-    index = _rebuild_index_for_cosine(index)
-
-    # Try GPU first, then gracefully fall back to CPU for any failure.
-    try:
-        res = faiss.StandardGpuResources()
-        gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
-        print("FAISS running on GPU")
-        return gpu_index
-    except Exception as e:
-        print(f"GPU not available, falling back to CPU. Reason: {e}")
+        # faiss-gpu is not installed, so cleanly stay on CPU.
+        print(f"{site_name}: faiss-gpu not installed, using CPU")
         return index
 
 
-def retrieve_similar_chunks(
-    query_embedding: np.ndarray,
-    index_path: str = "faiss_index.bin",
-    chunks_path: str = "chunks.json",
-    top_k: int = 5,
-    threshold: float = 0.5,
-) -> list[dict]:
-    """Retrieve the most similar chunks using cosine similarity with FAISS."""
+def ensure_cosine_index(index):
+    """Ensure the FAISS index uses inner product on normalized vectors."""
+    # Rebuild non-IndexFlatIP indexes so cosine similarity works consistently.
+    if not isinstance(index, faiss.IndexFlatIP):
+        print("Rebuilding index as IndexFlatIP for cosine similarity...")
+        all_vectors = faiss.rev_swig_ptr(
+            index.get_xb(), index.ntotal * index.d
+        )
+        all_vectors = all_vectors.reshape(index.ntotal, index.d).copy()
+        faiss.normalize_L2(all_vectors)
+        new_index = faiss.IndexFlatIP(index.d)
+        new_index.add(all_vectors)
+        return new_index
+    return index
+
+
+def load_all_indexes(base_dir: str) -> list[dict]:
+    """Load every site index folder found under the base vector-index directory."""
+    # Walk every direct child folder dynamically so new sites are picked up automatically.
+    loaded_sites: list[dict] = []
+    for site in os.listdir(base_dir):
+        site_path = os.path.join(base_dir, site)
+        if not os.path.isdir(site_path):
+            continue
+
+        # Each site folder must have both the index and metadata files.
+        index_path = os.path.join(site_path, "articles.index")
+        metadata_path = os.path.join(site_path, "metadata.json")
+        if not os.path.exists(index_path) or not os.path.exists(metadata_path):
+            print(f"Skipping {site}: missing files")
+            continue
+
+        # Load the index, force cosine compatibility, then move to GPU when available.
+        index = faiss.read_index(index_path)
+        index = ensure_cosine_index(index)
+        index = load_index_with_gpu(index, site)
+
+        # Load the aligned chunk metadata for this site.
+        with open(metadata_path, "r", encoding="utf-8") as file_handle:
+            metadata = json.load(file_handle)
+
+        loaded_sites.append(
+            {
+                "site": site,
+                "index": index,
+                "metadata": metadata,
+            }
+        )
+
+    # Report how many site indexes were loaded successfully.
+    print(f"Loaded {len(loaded_sites)} site indexes successfully")
+    return loaded_sites
+
+
+def embed_query(query_text: str) -> np.ndarray:
+    """Embed the user query with nomic-embed-text and normalize it for cosine search."""
     try:
-        # Step 3: validate and normalize the query embedding in place.
-        query_embedding = np.asarray(query_embedding, dtype=np.float32)
-        if query_embedding.ndim != 2 or query_embedding.shape[0] != 1:
-            raise ValueError("query_embedding must have shape (1, embedding_dim)")
-
+        # Use OllamaEmbeddings so query vectors match the current retrieval setup.
+        embedder = OllamaEmbeddings(model="nomic-embed-text")
+        query_vector = embedder.embed_query(query_text)
+        query_embedding = np.array([query_vector]).astype("float32")
         faiss.normalize_L2(query_embedding)
+        return query_embedding
+    except Exception as error:
+        # Raise a clear setup message if Ollama or the model is unavailable.
+        print(
+            "Ollama not running or nomic-embed-text not pulled.\n"
+            "Run: ollama pull nomic-embed-text"
+        )
+        raise RuntimeError("Query embedding failed") from error
 
-        # Step 1 and 2: load a cosine-ready FAISS index with auto GPU/CPU support.
-        index = load_faiss_index(index_path)
 
-        # Step 4: search the top-k nearest chunks.
-        search_k = min(top_k, index.ntotal) if index.ntotal > 0 else 0
+def search_all_sites(
+    site_indexes: list[dict],
+    query_embedding: np.ndarray,
+    top_k_per_site: int = 5,
+    threshold: float = 0.3,
+) -> list[dict]:
+    """Search every loaded site index and combine the passing chunk matches."""
+    all_results: list[dict] = []
+
+    # Query each site's FAISS index independently and keep only meaningful matches.
+    for site in site_indexes:
+        index = site["index"]
+        search_k = min(top_k_per_site, index.ntotal) if index.ntotal > 0 else 0
         if search_k <= 0:
-            print("No sufficiently similar documents found for this query.")
-            return []
+            print(f"{site['site']}: 0 results found")
+            continue
 
         scores, indices = index.search(query_embedding, search_k)
         scores = scores[0]
         indices = indices[0]
 
-        # Step 5: load chunk metadata and map FAISS positions to chunk records.
-        with open(chunks_path, "r", encoding="utf-8") as file_handle:
-            chunks = json.load(file_handle)
-
-        results: list[dict[str, Any]] = []
+        site_count = 0
         for score, idx in zip(scores, indices, strict=False):
             if idx == -1:
                 continue
-            if idx < 0 or idx >= len(chunks):
-                continue
-
-            # Step 6: keep only strong-enough cosine matches.
             if float(score) < threshold:
                 continue
+            if idx < 0 or idx >= len(site["metadata"]):
+                continue
 
-            chunk = chunks[idx]
-            results.append(
+            chunk = site["metadata"][idx]
+            all_results.append(
                 {
-                    "chunk_id": int(chunk["chunk_id"]),
-                    "text": str(chunk.get("text", chunk.get("content", ""))),
-                    "title": str(chunk["title"]),
-                    "url": str(chunk["url"]),
-                    "scraped_date": str(chunk.get("scraped_date", chunk.get("scraped_at", ""))),
+                    "chunk_id": chunk["chunk_id"],
+                    "text": chunk["text"],
+                    "title": chunk["title"],
+                    "url": chunk["url"],
+                    "scraped_date": chunk["scraped_date"],
                     "score": float(score),
-                    "website_name": str(chunk.get("website_name", chunk.get("source", ""))),
+                    "website_name": chunk["website_name"],
                 }
             )
+            site_count += 1
 
-        # Step 7: return the best results first.
-        results.sort(key=lambda item: item["score"], reverse=True)
-        if not results:
+        # Report how many results this site contributed after thresholding.
+        print(f"{site['site']}: {site_count} results found")
+
+    return all_results
+
+
+def retrieve_similar_chunks(
+    query_text: str,
+    base_dir: str = "app/embeddings/vector_index",
+    top_k_per_site: int = 5,
+    top_k_final: int = 10,
+    threshold: float = 0.3,
+) -> list[dict]:
+    """Load all site indexes, search them, rerank globally, and return the best chunks."""
+    try:
+        # Step 1: load every site index folder under the base vector-index directory.
+        site_indexes = load_all_indexes(base_dir)
+        if not site_indexes:
+            print("No site indexes could be loaded.")
+            return []
+
+        # Step 2: embed and normalize the incoming query text.
+        query_embedding = embed_query(query_text)
+
+        # Step 3: search each site independently and combine all passing results.
+        all_results = search_all_sites(
+            site_indexes=site_indexes,
+            query_embedding=query_embedding,
+            top_k_per_site=top_k_per_site,
+            threshold=threshold,
+        )
+        if not all_results:
             print("No sufficiently similar documents found for this query.")
             return []
 
-        return results
+        # Step 4: rerank the combined pool and return the final overall winners.
+        final_results = rerank_results(all_results, top_k_final=top_k_final)
+        return final_results
     except Exception as error:
         print(f"Failed to retrieve similar chunks: {error}")
         return []
@@ -125,34 +193,32 @@ def retrieve_similar_chunks(
 
 def search(
     query: str,
-    index_path: str | Path,
-    chunks_path: str | Path,
-    top_k: int = 5,
-    threshold: float = 0.5,
+    base_dir: str | Path = "app/embeddings/vector_index",
+    *_unused_args,
+    top_k: int = 10,
+    threshold: float = 0.3,
 ) -> list[dict]:
-    """Embed a text query and retrieve matching chunks from the retrieval store."""
-    if not query or top_k <= 0:
-        return []
+    """Compatibility wrapper around multi-site retrieval for existing callers."""
+    # Accept either the vector-index directory directly or an old file path and normalize it.
+    normalized_base_dir = Path(base_dir)
+    if normalized_base_dir.suffix == ".index":
+        normalized_base_dir = normalized_base_dir.parent
 
-    query_vector = get_embedding(query).reshape(1, -1).astype(np.float32)
     return retrieve_similar_chunks(
-        query_embedding=query_vector,
-        index_path=str(index_path),
-        chunks_path=str(chunks_path),
-        top_k=top_k,
+        query_text=query,
+        base_dir=str(normalized_base_dir),
+        top_k_per_site=5,
+        top_k_final=top_k,
         threshold=threshold,
     )
 
 
 if __name__ == "__main__":
-    dummy_embedding = np.random.rand(1, 384).astype("float32")
-    results = retrieve_similar_chunks(dummy_embedding)
+    query = "government economic policy inflation"
+    results = retrieve_similar_chunks(query)
     for r in results:
-        print(f"Chunk ID: {r['chunk_id']}")
-        print(f"Website: {r['website_name']}")
-        print(f"Title: {r['title']}")
-        print(f"URL: {r['url']}")
-        print(f"Scraped Date: {r['scraped_date']}")
-        print(f"Score: {r['score']:.4f}")
-        print(f"Text Preview: {r['text'][:100]}")
+        print(f"Site    : {r['website_name']}")
+        print(f"Title   : {r['title']}")
+        print(f"Score   : {r['score']:.4f}")
+        print(f"Text    : {r['text'][:100]}")
         print("---")
