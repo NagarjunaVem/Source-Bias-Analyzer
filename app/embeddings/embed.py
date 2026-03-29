@@ -8,8 +8,8 @@ from tqdm import tqdm
 
 MODEL_NAME = "nomic-embed-text"
 MODEL = OllamaEmbeddings(model=MODEL_NAME)
-BATCH_SIZE = 32
-MAX_EMBED_CHARS = 4000
+BATCH_SIZE = 16
+MAX_EMBED_CHARS = 3200
 print(f"Embedding model loaded: {MODEL_NAME}")
 
 
