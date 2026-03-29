@@ -1,506 +1,475 @@
-# Evidence-Based News Bias Analyzer
+# 🧠 Evidence-Based News Bias Analyzer
 
-An end-to-end local-first system for analyzing article bias, factual support, narrative framing, and evidence coverage using multi-source retrieval.
+An end-to-end **local-first AI system** for analyzing news articles using multi-source retrieval, structured reasoning, and explainable scoring.
+
+---
+
+# 🚀 Overview
 
 This project combines:
 
-- a Streamlit interface for interactive analysis and PDF export
-- an async scraping pipeline for RSS and web sources
-- an embeddings and FAISS indexing pipeline
-- a hybrid retrieval layer using FAISS + BM25 + reranking
-- a structured analysis pipeline for claim stance, contradictions, narrative framing, and calibrated scoring
+* 🔍 Hybrid retrieval (FAISS + BM25 + reranking)
+* 🧾 Claim-level verification
+* ⚖️ Stance + contradiction detection
+* 🧠 Narrative & framing analysis
+* 📊 Calibrated scoring system
+* 🌐 Continuous scraping + indexing pipeline
+* 🖥️ Streamlit UI + PDF reports
 
-## What The Project Does
+---
 
-Given an input article, URL, or PDF, the system:
+# 🏗️ System Architecture
 
-1. extracts article text
-2. retrieves related evidence from indexed publishers
-3. verifies extracted claims against retrieved evidence
-4. detects support, contradiction, or neutral stance
-5. analyzes framing, selective emphasis, and loaded language
-6. computes top-level and calibrated bias scores
-7. renders charts and a downloadable PDF report
+## 🔁 End-to-End Analysis Flow
 
-The project is designed to be explainable rather than black-box only. Most outputs are backed by intermediate evidence, source lists, stance breakdowns, and narrative analysis.
+```mermaid
+graph TD
+    A[User Input / URL / PDF]
+    B[Text Extraction]
+    C[Query Planning]
+    D[Hybrid Retrieval]
+    E[Evidence Processing]
+    F[Claim Extraction]
+    G[Stance Detection]
+    H[Contradiction Detection]
+    I[Narrative Analysis]
+    J[Scoring Engine]
+    K[UI + PDF Report]
 
-## Current Interface
+    A --> B --> C --> D --> E
+    E --> F --> G --> H
+    H --> I --> J --> K
+```
 
-Primary UI:
+---
 
-- `streamlit_app.py`
+## ⚙️ Scraper → FAISS Handoff (Producer–Consumer)
 
-Current input modes:
+```mermaid
+graph TD
+    A[Scraper Loop \n Producer] -->|Downloads Articles| B[data/web & data/rss]
+    B -->|Moves every 5 hrs| C{data/indexing_queue}
+    C -->|Worker polls every 60s| D[Index Worker \n Consumer]
+    D -->|Aggregates JSON| E[data/new_articles_detailed.jsonl]
+    E -->|Triggers| F[build_index_pipeline]
+    F -->|Embeddings| G[FAISS Vector DB]
+    F -->|On Success| H(Delete cycle folder)
+```
 
-- raw text
-- article URL
-- PDF upload
+---
 
-Current output sections include:
-
-- simple summary
-- score overview
-- calibrated score view
-- compared sources
-- summarized evidence context
-- claim check
-- where sources disagree
-- story framing
-- missing sides or viewpoints
-- loaded or emotional wording
-- PDF export
-
-## Project Structure
+# 📂 Project Structure
 
 ```text
 .
 +-- streamlit_app.py
 +-- README.md
 +-- requirements.txt
-+-- SCRAPING_ARCHITECTURE.md
 +-- SCRAPING_TO_FAISS_HANDOFF.md
 +-- app/
-�   +-- main.py
-�   +-- analysis/
-�   +-- embeddings/
-�   +-- evaluation/
-�   +-- input/
-�   +-- prompts/
-�   +-- retrieval/
+|   +-- main.py
+|   +-- analysis/
+|   +-- embeddings/
+|   +-- evaluation/
+|   +-- input/
+|   +-- prompts/
+|   +-- retrieval/
 +-- data/
 +-- logs/
 ```
 
-### Key Modules
+---
 
-#### `app/analysis/`
+# 🧩 Core Modules
 
-Core reasoning and scoring layer.
+## 🧠 Analysis (`app/analysis/`)
 
-Important files:
+Core reasoning layer:
 
-- `bias_detector.py`: main analysis pipeline
-- `claim_extractor.py`: extracts candidate claims from the input article
-- `stance_detector.py`: classifies evidence as support, contradict, or neutral
-- `contradiction_detector.py`: cross-source contradiction detection
-- `narrative_analyzer.py`: framing and selective-emphasis analysis
-- `lexicon.py`: categorized loaded-language lexicon and weights
-- `scoring_v2.py`: top-level score computation
-- `scorer.py`: calibrated structured scoring
-- `summarizer.py`: summarization of retrieved evidence
-- `json_utils.py`: validated structured generation with fallback behavior
+* bias detection
+* claim extraction
+* stance detection
+* contradiction detection
+* narrative analysis
+* scoring (raw + calibrated)
+* summarization
 
-#### `app/retrieval/`
+Pipeline:
 
-Retrieval planning, hybrid search, reranking, and weighting.
+```text
+Article → Claims → Evidence → Stance → Contradictions → Narrative → Scores
+```
 
-Important files:
+---
 
-- `faiss_retriever.py`: main retrieval orchestration
-- `hybrid_search.py`: per-site hybrid and BM25-only search helpers
-- `cross_encoder_reranker.py`: reranking with Ollama embeddings
-- `index_loader.py`: loads per-site FAISS indexes and metadata
-- `query_planner.py`: source/recency/topic planning and diversification
-- `weighting.py`: recency and credibility weighting
+## 🔍 Retrieval (`app/retrieval/`)
 
-#### `app/embeddings/`
+Hybrid retrieval system:
 
-Index building and embedding utilities.
+* FAISS semantic search
+* BM25 lexical fallback
+* hybrid fusion
+* reranking (cross-encoder)
+* credibility weighting
+* recency weighting
+* filtering + diversification
 
-Important files:
+Flow:
 
-- `build_index.py`: incremental build pipeline from scraped records to FAISS indexes
-- `chunker.py`: article chunking
-- `embed.py`: batch embedding helpers
-- `vector_store.py`: caching and FAISS persistence
+```text
+Query → FAISS + BM25 → Merge → Filter → Rerank → Results
+```
 
-#### `app/input/`
+### Safeguards
 
-Scraping and article ingestion.
+* corrupted index handling
+* embedding failure fallback
+* reranker fallback
+* BM25-only fallback
 
-Important files:
+---
 
-- `scraper.py`: scraper entrypoint
-- `loader.py`: manual article input helpers
-- `news_pipeline/config.py`: source definitions and crawl settings
-- `news_pipeline/crawler.py`: multi-source crawler orchestration
-- `news_pipeline/scheduler.py`: long-running scrape/index loop
-- `news_pipeline/extractors.py`: content extraction and cleaning
-- `news_pipeline/metadata_gate.py`: gating and metadata checks
-- `news_pipeline/scrapers/rss_scraper.py`
-- `news_pipeline/scrapers/web_scraper.py`
+## 📦 Embeddings (`app/embeddings/`)
 
-#### `app/evaluation/`
+Vector pipeline:
 
-Offline evaluation helpers.
+```text
+Articles → Chunking → Embeddings → FAISS Indexes
+```
 
-Important files:
+Features:
 
-- `dataset_loader.py`: dataset validation and loading
-- `run_evaluation.py`: repeated-run evaluation and aggregate metrics
+* incremental indexing
+* embedding caching
+* per-site indexes
+* batching + backoff handling
 
-## Analysis Pipeline
+---
+
+## 🌐 Input Pipeline (`app/input/`)
+
+Scraping system:
+
+* RSS scraping
+* web scraping (BFS discovery)
+* async crawling
+* deduplication (metadata gate)
+* scheduler-driven cycles
+
+### Scraper Cycle Design
+
+* runs in timed cycles (default: 5 hours)
+* moves results to indexing queue
+* restarts immediately
+
+---
+
+## 📊 Evaluation (`app/evaluation/`)
+
+Supports:
+
+* dataset loading
+* bias label evaluation
+* stance evaluation
+* aggregate metrics
+
+---
+
+# 🔬 Detailed Analysis Pipeline
 
 ```text
 Input Article
-  -> Retrieval Plan
-  -> Hybrid Retrieval (FAISS + BM25)
-  -> Credibility / Recency Weighting
-  -> Ollama Reranking
-  -> Claim Extraction
-  -> Claim-Level Evidence Retrieval
-  -> Stance Detection
-  -> Contradiction Detection
-  -> Narrative Analysis
-  -> Loaded-Language Detection
-  -> Evidence Summarization
-  -> Top-Level Scores
-  -> Calibrated Scores
-  -> Streamlit UI + PDF Report
+  → Retrieval Planning
+  → Hybrid Retrieval (FAISS + BM25)
+  → Credibility / Recency Weighting
+  → Reranking
+  → Claim Extraction
+  → Claim-Level Retrieval
+  → Stance Detection
+  → Contradiction Detection
+  → Narrative Analysis
+  → Loaded Language Detection
+  → Evidence Summarization
+  → Top-Level Scores
+  → Calibrated Scores
 ```
 
-## Retrieval Architecture
+---
 
-The retrieval layer is hybrid and fallback-aware.
+# 📊 Scoring System
 
-It currently uses:
+## Top-Level Metrics
 
-- FAISS semantic retrieval
-- BM25 lexical retrieval
-- hybrid candidate fusion
-- credibility weighting
-- recency weighting
-- reranking using local Ollama embeddings
-- relevance filtering to remove off-topic or low-signal results
-- BM25 fallback when Ollama embedding/reranking becomes unavailable
+* factual accuracy
+* narrative bias
+* completeness
+* confidence
 
-### Retrieval Safeguards
+## Calibrated Metrics
 
-The current code includes protections for:
+* credibility score
+* bias score
+* completeness score
+* confidence
 
-- corrupted or partially broken site indexes
-- oversized embedding queries
-- Ollama timeouts and runner termination
-- stale or irrelevant result filtering
-- reranker failure fallback to score-sorted results
-- BM25-only fallback when query embedding fails
+Component signals:
 
-## Indexed Sources
+* factual_accuracy
+* narrative_bias
+* loaded_language
+* evidence_support
+* source_reliability
+* viewpoint_coverage
+* context_depth
 
-The current workspace contains `25` per-site vector index folders under:
+---
 
-- `app/embeddings/vector_index`
+# 🧾 Loaded Language Analysis
 
-Examples include:
+Categories:
 
-- `bbc_com`
-- `bbc_co_uk`
-- `apnews_com`
-- `aljazeera_com`
-- `cnbc_com`
-- `theguardian_com`
-- `thehindu_com`
-- `timesofindia_indiatimes_com`
-- `techcrunch_com`
-- `wired_com`
-- `nature_com`
-- `npr_org`
+* alarmist
+* certainty_overclaim
+* conflict_escalation
+* moral_judgment
+* propaganda_framing
+* derision_ridicule
 
-The scraping configuration defines a larger source pool across:
+UI includes:
 
-- Indian news
-- international news
-- technology
-- AI
-- science
-- business
-- aggregators
+* category distribution charts
+* highlighted sentences
+* word grouping
 
-## Scoring
+---
 
-### Top-Level Scores
+# 🤖 Models Used (Ollama)
 
-The app exposes these main top-level metrics:
+| Task               | Model            |
+| ------------------ | ---------------- |
+| Embeddings         | nomic-embed-text |
+| Narrative analysis | qwen2.5:7b       |
+| Scoring            | phi3:mini        |
+| Summarization      | gemma2:9b        |
 
-- factual accuracy
-- narrative bias
-- completeness
-- confidence
+---
 
-These are computed from:
+# 🧪 Test Article Generation
 
-- stance distribution
-- contradiction presence
-- evidence density
-- missing-viewpoint imbalance
-- narrative framing
-- weighted loaded-language signals
+Test articles used for evaluation are **generated using a local LLM**.
 
-### Calibrated Scores
+### ⚙️ Model Used
 
-The calibrated scorer adds:
+* llama2-uncensored:7b
 
-- credibility score
-- bias score
-- completeness score
-- confidence
-- component-level sub-scores
+### 🎯 Purpose
 
-Component-level calibrated signals include:
+These generated articles are used strictly for **evaluation and testing**, not for training or production inference.
 
-- factual_accuracy
-- narrative_bias
-- loaded_language
-- evidence_support
-- source_reliability
-- viewpoint_coverage
-- context_depth
+They help:
 
-## Loaded-Language Analysis
+* benchmark bias detection accuracy
+* test stance and contradiction detection
+* validate scoring calibration
+* simulate controlled edge cases
 
-The project now includes a categorized lexical detector.
+### 🧾 Types of Generated Articles
 
-Current categories:
+The evaluation setup includes:
 
-- `alarmist`
-- `certainty_overclaim`
-- `conflict_escalation`
-- `moral_judgment`
-- `propaganda_framing`
-- `derision_ridicule`
+* balanced articles
+* biased / one-sided articles
+* emotionally loaded articles
+* misleading or framed narratives
+* factually incorrect articles
+* contradictory articles
+* weak evidence articles
 
-The Streamlit UI currently shows:
+### 🔍 Why This Matters
 
-- wording category mix pie chart
-- category counts chart
-- top matched words pie chart
-- words grouped by category
-- flagged sentences with inline highlighted terms
+Using generated data allows:
 
-Category severity is also weighted in scoring so stronger framing categories influence the results more heavily.
+* controlled and reproducible testing
+* targeted evaluation of specific failure cases
+* consistent benchmarking without relying on noisy real-world datasets
 
-## Models Used
+### 🔗 Integration
 
-This project is built around local Ollama-hosted models.
+Generated articles are passed into:
 
-Current in-project model usage:
-
-- `nomic-embed-text`
-  - query embedding
-  - reranking embeddings
-- `qwen2.5:7b`
-  - structured narrative analysis
-- `phi3:mini`
-  - calibrated score evaluation
-- `gemma2:9b`
-  - retrieved evidence summarization
-
-### Test Article Generation
-
-For evaluation content generation, test articles are made using:
-
-- `llama2-uncensored:7b`
-
-This is used to create bias-variant and adversarial-style evaluation articles such as:
-
-- balanced articles
-- loaded articles
-- misleading articles
-- factually wrong articles
-- contradictory articles
-- one-sided articles
-- weakly supported articles
-
-## Running The Project
-
-### 1. Create / activate a virtual environment
-
-Windows PowerShell example:
-
-```powershell
-.venv\Scripts\Activate.ps1
+```text
+Evaluation → Analysis Pipeline → Metrics
 ```
 
-### 2. Install dependencies
+This ensures the system can be tested systematically across different bias and reasoning scenarios.
 
-```powershell
+---
+
+---
+
+# 🖥️ Running the Project
+
+## Setup
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 3. Make sure Ollama is running
+## Run UI
 
-You need local Ollama available at:
-
-- `http://localhost:11434`
-
-You should have the required models pulled locally.
-
-### 4. Run the Streamlit app
-
-```powershell
+```bash
 streamlit run streamlit_app.py
 ```
 
-### 5. Optional CLI mode
+## CLI Mode
 
-```powershell
-python app\main.py
+```bash
+python app/main.py
 ```
 
-`app/main.py` currently offers:
+Options:
 
-1. continuous scraper + index queue pipeline
-2. manual bias analyzer test
+```text
+1 → continuous scraper + indexing
+2 → manual analyzer
+```
 
-## Scraping And Indexing
+---
 
-### Scraper entrypoint
+# 🔁 Scraping & Indexing
 
-```powershell
+## Scraper
+
+```bash
 python -m app.input.scraper
 ```
 
-### What the scraper does
+Features:
 
-The input pipeline supports:
+* RSS + web scraping
+* BFS discovery
+* deduplication
+* queue-based indexing handoff
 
-- RSS scraping
-- web scraping with BFS-style link discovery
-- per-source persistence
-- deduplication
-- queue-based handoff to indexing
+## Index Builder
 
-See:
+Located at:
 
-- [SCRAPING_ARCHITECTURE.md](C:\Users\NAGARJUNA\Desktop\New%20folder\SCRAPING_ARCHITECTURE.md)
-- [SCRAPING_TO_FAISS_HANDOFF.md](C:\Users\NAGARJUNA\Desktop\New%20folder\SCRAPING_TO_FAISS_HANDOFF.md)
-
-### Build or rebuild indexes
-
-The embeddings/index pipeline lives in:
-
-- `app/embeddings/build_index.py`
-
-It:
-
-- loads scraped JSON/JSONL records
-- classifies and filters valid article URLs
-- chunks article content
-- reuses cached embeddings where possible
-- groups content by domain/publisher
-- writes per-domain FAISS indexes with metadata
-
-## Evaluation
-
-Evaluation entrypoint:
-
-```powershell
-python -m app.evaluation.run_evaluation path\to\dataset.json
+```text
+app/embeddings/build_index.py
 ```
 
-Current evaluation output includes:
+Responsibilities:
 
-- articles evaluated
-- accuracy
-- consistency
-- prediction distribution
+* load JSON/JSONL data
+* filter valid articles
+* chunk text
+* reuse embeddings
+* build FAISS indexes
 
-### Expected dataset shape
+---
 
-Each item may contain:
+# 📄 PDF Reporting
 
-- `article_text` or `text`
-- `expected_bias_label` or `label`
-- optional `expected_claim_stances`
-- optional `metadata`
+Generated via Streamlit + PyMuPDF.
 
-Supported high-level labels used by the evaluator:
+Includes:
 
-- `low_bias`
-- `mixed`
-- `high_bias`
+* summary
+* calibrated scores
+* evidence context
+* claim verification
+* contradictions
+* narrative analysis
+* source comparison
+* loaded language
 
-## PDF Reporting
+---
 
-The Streamlit app can export a PDF report using PyMuPDF.
+# ⚠️ Limitations
 
-The report currently includes:
+* heuristic claim extraction
+* model latency varies by hardware
+* retrieval noise in edge cases
+* scoring still evolving
 
-- executive summary
-- calibrated scores
-- article excerpt
-- summarized evidence context
-- claim check
-- contradictions
-- narrative analysis
-- viewpoint coverage
-- compared sources
-- loaded language findings
+---
 
-## Current Practical Notes
+# 💡 Strengths
 
-- This is a local-first system and depends heavily on Ollama stability.
-- Retrieval quality depends on the freshness and quality of the local indexes.
-- Summarization and calibrated scoring can still be slower than the rest of the pipeline when local models are under load.
-- Retrieval and scoring now include multiple fallbacks, but model availability still affects quality.
-- The Streamlit app uses runtime compatibility guards to handle stale imports more safely during reruns.
+### 🧵 Multi-Scraper Architecture
 
-## Known Limitations
+* concurrent async scraping across multiple sources
+* supports both RSS and full web crawling
+* BFS-style discovery for deeper coverage
+* per-source configuration and scaling
 
-- claim extraction is heuristic and may miss subtle or implicit claims
-- some retrieved sources may still be only partially relevant on hard or ambiguous topics
-- local model quality and latency vary by hardware
-- calibrated scoring explanations can still be softer than ideal on some mixed articles
-- evaluation currently uses lightweight aggregate metrics and not a full benchmark harness
-- lexical detection is category-driven and not a substitute for full semantic framing analysis
+### 🧠 Multi-Index FAISS Architecture
 
-## Recommended Local Workflow
+* separate FAISS index per publisher/domain
+* avoids single-index bottlenecks
+* improves retrieval diversity
+* enables source-level weighting and filtering
 
-1. scrape or refresh source data
-2. build or update indexes
-3. run the Streamlit app
-4. test with both real articles and generated evaluation variants
-5. export PDF reports for inspection
-6. run dataset evaluation for regression tracking
+### 🔀 Hybrid Retrieval System
 
-## Example Test Use Cases
+* FAISS (semantic) + BM25 (lexical)
+* fusion of results across multiple sources
+* fallback-safe design (works even if embeddings fail)
 
-This project is well suited for testing articles that are:
+### ⚖️ Advanced Ranking & Weighting
 
-- balanced and well-supported
-- weakly supported
-- selectively framed
-- emotionally loaded
-- overclaimed with certainty
-- internally contradictory
-- factually wrong
-- propaganda-style
-- ridicule-heavy
+* cross-encoder reranking
+* credibility-based weighting per source
+* recency-based scoring adjustments
+* adaptive thresholds per site
 
-Generated evaluation articles using `llama2-uncensored:7b` are especially useful for stress-testing:
+### 🔄 Continuous Data Pipeline
 
-- loaded-language categorization
-- contradiction handling
-- score calibration
-- missing-viewpoint detection
+* producer-consumer architecture
+* scraper and indexing fully decoupled
+* automatic FAISS updates
+* zero blocking between ingestion and ML pipeline
 
-## Dependencies
+### 🛡️ Fault Tolerance
 
-Current `requirements.txt` includes packages such as:
+* safe fallbacks for embedding failures
+* reranker failure recovery
+* corrupted index handling
+* retry-safe indexing queue
 
-- `streamlit`
-- `requests`
-- `beautifulsoup4`
-- `lxml`
-- `aiohttp`
-- `faiss-cpu`
-- `numpy`
-- `langchain-ollama`
-- `rank_bm25`
-- `pymupdf`
-- `torch`
-- `sentence_transformers`
+### 🧪 Evaluation-Ready System
 
-## License / Usage Note
+* synthetic test article generation
+* structured dataset evaluation
+* reproducible benchmarking
 
-Add your preferred license section here if you want to publish or distribute the project formally.
+### 🧩 Modular Design
+
+* clean separation of concerns
+
+* independently testable modules
+
+* scalable architecture
+
+* local-first (privacy friendly)
+
+* explainable outputs
+
+* modular architecture
+
+* fault-tolerant pipeline
+
+* production-style ingestion + indexing
+
+---
+
+# 🛣️ Future Work
+
+* improved claim extraction
+* stronger contradiction reasoning
+* distributed indexing
+* real-time ingestion
+* advanced evaluation benchmarks
+
+---
