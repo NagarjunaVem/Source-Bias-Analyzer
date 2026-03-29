@@ -1,4 +1,4 @@
-"""Multi-site FAISS retrieval helpers."""
+"""Multi-site FAISS retrieval helpers using FAISS CPU."""
 
 from __future__ import annotations
 
@@ -13,23 +13,10 @@ from langchain_ollama import OllamaEmbeddings
 from app.retrieval.reranker import rerank_results
 
 
-def load_index_with_gpu(index, site_name: str):
-    """Move an index to GPU when faiss-gpu is available, otherwise keep CPU."""
-    # Always check for the GPU FAISS symbols first so faiss-cpu does not crash here.
-    if hasattr(faiss, "StandardGpuResources"):
-        try:
-            res = faiss.StandardGpuResources()
-            gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
-            print(f"{site_name}: running on GPU")
-            return gpu_index
-        except Exception as e:
-            # GPU transfer can fail because of CUDA issues or memory pressure.
-            print(f"{site_name}: GPU failed, using CPU. Reason: {e}")
-            return index
-    else:
-        # faiss-gpu is not installed, so cleanly stay on CPU.
-        print(f"{site_name}: faiss-gpu not installed, using CPU")
-        return index
+def load_index_cpu(index, site_name: str):
+    """Keep the loaded FAISS index on CPU."""
+    print(f"{site_name}: using FAISS CPU")
+    return index
 
 
 def ensure_cosine_index(index):
@@ -64,10 +51,10 @@ def load_all_indexes(base_dir: str) -> list[dict]:
             print(f"Skipping {site}: missing files")
             continue
 
-        # Load the index, force cosine compatibility, then move to GPU when available.
+        # Load the index, force cosine compatibility, and keep it on CPU.
         index = faiss.read_index(index_path)
         index = ensure_cosine_index(index)
-        index = load_index_with_gpu(index, site)
+        index = load_index_cpu(index, site)
 
         # Load the aligned chunk metadata for this site.
         with open(metadata_path, "r", encoding="utf-8") as file_handle:
