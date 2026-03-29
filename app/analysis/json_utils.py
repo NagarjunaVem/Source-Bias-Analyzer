@@ -36,8 +36,8 @@ def generate_validated_json(
     fallback: Any,
     *,
     model: str = "qwen2.5:7b",
-    timeout: int = 45,
-    max_retries: int = 3,
+    timeout: int = 12,
+    max_retries: int = 2,
 ) -> JsonGenerationResult:
     """Generate JSON with validation, retries, and a safe fallback."""
     last_raw_output = ""
@@ -71,7 +71,15 @@ def generate_validated_json(
                 used_fallback=False,
             )
         except Exception as error:
-            LOGGER.warning("Structured generation attempt %s failed: %s", attempt, error)
+            is_last_attempt = attempt == max_retries
+            if is_last_attempt:
+                LOGGER.warning(
+                    "Structured generation attempt %s failed: %s. Falling back to heuristic result.",
+                    attempt,
+                    error,
+                )
+            else:
+                LOGGER.warning("Structured generation attempt %s failed: %s", attempt, error)
             retry_prompt = (
                 f"{prompt.strip()}\n\n"
                 "Your previous response was invalid. Return only one JSON object that matches the requested schema."

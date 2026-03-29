@@ -32,21 +32,38 @@ def compute_scores(
     """Compute calibrated quality scores from the structured analysis output."""
     support_total = sum(int(item.get("support_count", 0)) for item in claim_analyses)
     contradict_total = sum(int(item.get("contradict_count", 0)) for item in claim_analyses)
+    neutral_total = sum(int(item.get("neutral_count", 0)) for item in claim_analyses)
     analyzed_claims = max(len(claim_analyses), 1)
     contradiction_count = len(contradictions.get("contradictions", []))
     evidence_density = _average(
         [len(item.get("all_evidence", [])) / 5.0 for item in claim_analyses]
     )
     stance_confidence = _average([float(item.get("stance_confidence", 0.0)) for item in claim_analyses])
+    support_ratio = support_total / max(support_total + contradict_total + neutral_total, 1)
+    contradiction_ratio = contradict_total / max(support_total + contradict_total + neutral_total, 1)
+    neutral_ratio = neutral_total / max(support_total + contradict_total + neutral_total, 1)
 
-    factual_accuracy = _clamp((support_total + 1) / (support_total + contradict_total + contradiction_count + 1))
+    factual_accuracy = _clamp(
+        0.55 * support_ratio
+        + 0.20 * min(evidence_density, 1.0)
+        + 0.15 * stance_confidence
+        + 0.10 * (1.0 - contradiction_ratio)
+        - 0.20 * neutral_ratio
+        - 0.12 * contradiction_count
+    )
     narrative_bias = _clamp(
         0.55 * float(narrative_analysis.get("framing_bias_score", 0.0))
         + 0.45 * float(narrative_analysis.get("selective_emphasis_score", 0.0))
     )
 
     imbalance = float(missing_viewpoints.get("imbalance_score", 1.0))
-    completeness = _clamp((1.0 - imbalance) * 0.75 + min(evidence_density, 1.0) * 0.25)
+    completeness = _clamp(
+        0.45 * (1.0 - imbalance)
+        + 0.20 * min(evidence_density, 1.0)
+        + 0.15 * support_ratio
+        + 0.10 * (1.0 - contradiction_ratio)
+        - 0.20 * neutral_ratio
+    )
     confidence = _clamp(
         0.45 * min(evidence_density, 1.0)
         + 0.35 * stance_confidence

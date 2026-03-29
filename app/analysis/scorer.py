@@ -1,17 +1,18 @@
-"""Calibrated scoring agent for source bias analysis using LangChain Ollama."""
+"""Calibrated scoring agent for source bias analysis."""
 
 from __future__ import annotations
 
-import json
+import re
 from typing import Any
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_ollama import ChatOllama
+from app.analysis.json_utils import StructuredOutputError, generate_validated_json
+from app.analysis.lexicon import BIAS_LEXICON, CATEGORY_WEIGHTS, TERM_TO_CATEGORY
 
-from app.analysis.json_utils import StructuredOutputError
-
-MODEL_NAME = "gemma2:9b"
-
+MODEL_NAME = "phi3:mini"
+SCORER_TIMEOUT_SECONDS = 28
+SCORER_MAX_RETRIES = 1
+MAX_ARTICLE_CHARS = 1600
+MAX_EVIDENCE_CHARS = 1800
 WEIGHTS = {
     "credibility": {
         "factual_accuracy": 0.60,
@@ -35,11 +36,10 @@ WEIGHTS = {
     },
 }
 
-SCORER_PROMPT = ChatPromptTemplate.from_template(
-    """You are a strict source-bias scoring agent.
+SCORER_PROMPT = """You are a severe source-bias scoring agent.
 
 Score the input article using only the article text and the related evidence provided.
-Your goal is consistency, not generosity. Use the score bands carefully:
+Your goal is consistency, skepticism, and non-generosity. Default to lower scores unless the evidence clearly supports a stronger score. Use the score bands carefully:
 
 0.00-0.20 = very weak
 0.21-0.40 = weak
@@ -78,11 +78,18 @@ Rules:
 - All component scores must be between 0 and 1
 - Use only the provided text
 - Do not hallucinate
+- Be conservative: do not call the article balanced, neutral, or well-supported unless the evidence clearly shows multiple competing viewpoints with solid attribution
+- Treat executive opinion, analyst opinion, predictions, and forward-looking warnings as weaker support than directly verified facts
+- If the article contains strong claims, emotional framing, or one-sided emphasis, lower narrative bias and viewpoint coverage scores accordingly
+- If the evidence mostly repeats the article's framing rather than independently verifying it, lower factual accuracy and evidence_support
+- When evidence is sparse, mixed, forecast-driven, or only partially relevant, do not assign high confidence
+- Prefer "mixed", "uncertain", or "partially supported" over overly positive judgments
 - Factual accuracy measures alignment with evidence and internal consistency
 - Narrative bias measures framing, imbalance, and selective emphasis
 - Lower viewpoint coverage when important perspectives are absent
 - Lower source reliability when the evidence is sparse, unclear, or weakly attributable
-- Keep explanation concise and evidence-based
+- Keep explanation concise, evidence-based, and critical
+- Return JSON only, with no prose before or after it
 
 ARTICLE:
 {article}
@@ -90,12 +97,6 @@ ARTICLE:
 RELATED EVIDENCE:
 {evidence}
 """
-)
-
-SCORER_MODEL = ChatOllama(
-    model=MODEL_NAME,
-    temperature=0.1,
-)
 
 
 def _clamp_score(value: Any) -> float:
@@ -105,6 +106,10 @@ def _clamp_score(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(1.0, score))
+
+
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", text.lower())
 
 
 def _normalize_component_scores(raw_scores: dict[str, Any]) -> dict[str, float]:
@@ -156,6 +161,33 @@ def _compute_confidence(component_scores: dict[str, float], json_validity: float
     return _weighted_sum(confidence_inputs, WEIGHTS["confidence"])
 
 
+def _normalize_explanation(explanation: str, component_scores: dict[str, float]) -> str:
+    """Tone down overly generous model explanations when the scores do not support them."""
+    normalized = str(explanation or "").strip()
+    if not normalized:
+        return normalized
+
+    lower = normalized.lower()
+    viewpoint_coverage = component_scores.get("viewpoint_coverage", 0.0)
+    narrative_bias = component_scores.get("narrative_bias", 0.0)
+    evidence_support = component_scores.get("evidence_support", 0.0)
+    factual_accuracy = component_scores.get("factual_accuracy", 0.0)
+
+    if "balanced" in lower and (
+        viewpoint_coverage < 0.72
+        or narrative_bias > 0.40
+        or evidence_support < 0.70
+        or factual_accuracy < 0.75
+    ):
+        normalized = re.sub(r"\bbalanced view\b", "mixed view", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"\bbalanced\b", "mixed", normalized, flags=re.IGNORECASE)
+
+    if "neutral" in normalized.lower() and narrative_bias > 0.35:
+        normalized = re.sub(r"\bneutral\b", "mixed", normalized, flags=re.IGNORECASE)
+
+    return normalized
+
+
 def _build_result(parsed: dict[str, Any], raw_output: str, json_validity: float) -> dict[str, Any]:
     """Build the final calibrated scoring payload."""
     component_scores = _normalize_component_scores(parsed.get("component_scores", {}))
@@ -178,11 +210,12 @@ def _build_result(parsed: dict[str, Any], raw_output: str, json_validity: float)
         "confidence": confidence,
         "tone": str(parsed.get("tone", "")).strip() or "Unknown",
         "bias_type": str(parsed.get("bias_type", "")).strip() or "Unknown",
-        "explanation": str(parsed.get("explanation", "")).strip(),
+        "explanation": _normalize_explanation(str(parsed.get("explanation", "")).strip(), component_scores),
         "missing_viewpoints": [str(item).strip() for item in missing_viewpoints if str(item).strip()],
         "evidence_summary": str(parsed.get("evidence_summary", "")).strip(),
         "ranked_perspectives": _normalize_ranked_perspectives(parsed.get("ranked_perspectives", [])),
         "model": MODEL_NAME,
+        "used_fallback": False,
         "normalization": {
             "score_range": "0_to_1",
             "weighted_formulas": WEIGHTS,
@@ -192,38 +225,49 @@ def _build_result(parsed: dict[str, Any], raw_output: str, json_validity: float)
     }
 
 
-def _fallback_result(raw_output: str) -> dict[str, Any]:
-    """Return a safe fallback payload if JSON parsing fails."""
-    return {
+def _fallback_result(raw_output: str, article: str = "", evidence: str = "") -> dict[str, Any]:
+    """Return a heuristic fallback payload when structured scoring is unavailable."""
+    article_tokens = _tokenize(article)
+    evidence_tokens = _tokenize(evidence)
+    weighted_bias_hits = sum(CATEGORY_WEIGHTS.get(TERM_TO_CATEGORY.get(token, ""), 1.0) for token in article_tokens if token in BIAS_LEXICON)
+    source_mentions = re.findall(r"Source:\s*([^|\n]+)", evidence)
+    unique_sources = {item.strip() for item in source_mentions if item.strip()}
+
+    loaded_language = _clamp_score((weighted_bias_hits / max(len(article_tokens), 1)) * 28.0)
+    evidence_support = _clamp_score(len(evidence_tokens) / 850.0)
+    source_reliability = _clamp_score((len(unique_sources) * 0.14) + 0.10 if unique_sources else 0.08)
+    viewpoint_coverage = _clamp_score((len(unique_sources) / 6.0) - 0.05)
+    context_depth = _clamp_score(len(evidence) / 2200.0)
+    factual_accuracy = _clamp_score((0.38 * evidence_support) + (0.27 * source_reliability) + (0.15 * context_depth))
+    narrative_bias = _clamp_score((0.75 * loaded_language) + (0.45 * (1.0 - viewpoint_coverage)))
+
+    heuristic_payload = {
         "component_scores": {
-            "factual_accuracy": 0.0,
-            "narrative_bias": 0.0,
-            "loaded_language": 0.0,
-            "evidence_support": 0.0,
-            "source_reliability": 0.0,
-            "viewpoint_coverage": 0.0,
-            "context_depth": 0.0,
+            "factual_accuracy": factual_accuracy,
+            "narrative_bias": narrative_bias,
+            "loaded_language": loaded_language,
+            "evidence_support": evidence_support,
+            "source_reliability": source_reliability,
+            "viewpoint_coverage": viewpoint_coverage,
+            "context_depth": context_depth,
         },
-        "factual_accuracy_score": 0.0,
-        "narrative_bias_score": 0.0,
-        "bias_score": 0.0,
-        "credibility_score": 0.0,
-        "completeness_score": 0.0,
-        "confidence": 0.0,
-        "tone": "Unknown",
-        "bias_type": "Unknown",
-        "explanation": "Model output could not be parsed as valid JSON.",
+        "tone": "Heuristic fallback",
+        "bias_type": "Unavailable",
+        "explanation": "Calibrated scoring model timed out or returned unusable output, so a stricter heuristic fallback was used.",
         "missing_viewpoints": [],
-        "evidence_summary": "",
-        "ranked_perspectives": [],
-        "model": MODEL_NAME,
-        "normalization": {
-            "score_range": "0_to_1",
-            "weighted_formulas": WEIGHTS,
-            "json_validity": 0.0,
-        },
-        "raw_output": raw_output,
+        "evidence_summary": f"Heuristic fallback based on {len(unique_sources)} detected sources and {len(evidence_tokens)} evidence tokens.",
+        "ranked_perspectives": [
+            {
+                "source": source,
+                "score": _clamp_score(0.35 + (index * 0.06)),
+                "reason": "Detected in structured evidence block."
+            }
+            for index, source in enumerate(sorted(unique_sources)[:4])
+        ],
     }
+    result = _build_result(heuristic_payload, raw_output=raw_output, json_validity=0.0)
+    result["used_fallback"] = True
+    return result
 
 
 def _validate_scorer_payload(payload: Any) -> dict[str, Any]:
@@ -239,19 +283,23 @@ def _validate_scorer_payload(payload: Any) -> dict[str, Any]:
 
 def score_article(article: str, evidence: str = "") -> dict[str, Any]:
     """Score one article against related evidence using calibrated post-processing."""
-    chain = SCORER_PROMPT | SCORER_MODEL
-    response = chain.invoke(
-        {
-            "article": article.strip(),
-            "evidence": evidence.strip() or "No external evidence provided.",
-        }
+    normalized_article = article.strip()[:MAX_ARTICLE_CHARS]
+    normalized_evidence = (evidence.strip() or "No external evidence provided.")[:MAX_EVIDENCE_CHARS]
+    prompt = SCORER_PROMPT.format(
+        article=normalized_article,
+        evidence=normalized_evidence,
     )
-
-    raw_output = response.content if isinstance(response.content, str) else str(response.content)
-    try:
-        parsed = json.loads(raw_output)
-        parsed = _validate_scorer_payload(parsed)
-    except (json.JSONDecodeError, StructuredOutputError):
-        return _fallback_result(raw_output)
-
-    return _build_result(parsed, raw_output=raw_output, json_validity=1.0)
+    fallback = _fallback_result("", article=normalized_article, evidence=normalized_evidence)
+    result = generate_validated_json(
+        prompt=prompt,
+        validator=_validate_scorer_payload,
+        fallback=fallback,
+        model=MODEL_NAME,
+        timeout=SCORER_TIMEOUT_SECONDS,
+        max_retries=SCORER_MAX_RETRIES,
+    )
+    if result.used_fallback:
+        fallback_payload = dict(result.payload)
+        fallback_payload["raw_output"] = result.raw_output
+        return fallback_payload
+    return _build_result(result.payload, raw_output=result.raw_output, json_validity=1.0)
