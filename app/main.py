@@ -1,5 +1,6 @@
 from app.input.loader import load_text
 from app.analysis.bias_detector import analyze_bias
+from app.analysis.summarizer import summarize_retrieved_chunks
 from app.retrieval.faiss_retriever import search
 
 INDEX_PATH = "app/embeddings/vector_index/articles.index"
@@ -39,7 +40,7 @@ def main():
         print("No related sources found. Proceeding without RAG context.\n")
         context = ""
     else:
-        context = build_context(results)
+        context = summarize_retrieved_chunks(results)
 
     # 4. Combine article + retrieved context
     combined_input = f"""
