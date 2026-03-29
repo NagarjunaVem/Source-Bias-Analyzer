@@ -13,6 +13,7 @@ from app.retrieval.cross_encoder_reranker import cross_encoder_rerank
 from app.retrieval.empty_results import handle_empty_results
 from app.retrieval.hybrid_search import search_all_sites_hybrid
 from app.retrieval.index_loader import load_all_indexes
+from app.retrieval.query_planner import diversify_results, filter_results, filter_site_indexes, plan_retrieval
 from app.retrieval.weighting import apply_credibility_weight, apply_recency_weight
 
 
@@ -39,9 +40,16 @@ def retrieve_similar_chunks(
 ) -> list[dict]:
     """Run the full hybrid retrieval pipeline and return the best final chunks."""
     try:
+        retrieval_plan = plan_retrieval(query_text)
+        print(f"Retrieval plan: {retrieval_plan}")
+
         site_indexes = load_all_indexes(base_dir)
         if not site_indexes:
             print("No site indexes could be loaded.")
+            return []
+        site_indexes = filter_site_indexes(site_indexes, retrieval_plan)
+        if not site_indexes:
+            print("No site indexes matched the retrieval plan.")
             return []
 
         query_embedding = embed_query(query_text)
@@ -51,8 +59,16 @@ def retrieve_similar_chunks(
             return []
 
         all_results = apply_recency_weight(all_results)
-        all_results = apply_credibility_weight(all_results)
+        all_results = filter_results(all_results, retrieval_plan)
+        if not all_results:
+            return []
+
+        if retrieval_plan.get("credibility_priority", True):
+            all_results = apply_credibility_weight(all_results)
+
         final_results = cross_encoder_rerank(query_text, all_results)
+        if retrieval_plan.get("diversity_required", False):
+            final_results = diversify_results(final_results, TOP_K_FINAL_MAX)
         return final_results
     except Exception as error:
         print(f"Failed to retrieve similar chunks: {error}")
