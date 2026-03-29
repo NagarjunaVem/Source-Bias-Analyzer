@@ -15,11 +15,13 @@ class FetchTask:
 class ArticleTask:
     url: str
     source_name: str
+    source_type: str
     category: str
     title_hint: str | None = None
     published_at: str | None = None
     depth: int = 0
     discovered_from: str | None = None
+    _prefetched: dict | None = None
 
 
 @dataclass(slots=True)
