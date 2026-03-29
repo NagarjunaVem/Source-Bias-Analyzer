@@ -78,7 +78,8 @@ def embed_query(query_text: str) -> np.ndarray:
     try:
         # Use OllamaEmbeddings so query vectors match the current retrieval setup.
         embedder = OllamaEmbeddings(model="nomic-embed-text")
-        query_vector = embedder.embed_query(query_text)
+        normalized_query = " ".join(str(query_text).split())
+        query_vector = embedder.embed_query(normalized_query[:2000])
         query_embedding = np.array([query_vector]).astype("float32")
         faiss.normalize_L2(query_embedding)
         return query_embedding
@@ -99,6 +100,7 @@ def search_all_sites(
 ) -> list[dict]:
     """Search every loaded site index and combine the passing chunk matches."""
     all_results: list[dict] = []
+    fallback_results: list[dict] = []
 
     # Query each site's FAISS index independently and keep only meaningful matches.
     for site in site_indexes:
@@ -113,30 +115,46 @@ def search_all_sites(
         indices = indices[0]
 
         site_count = 0
+        site_best_score: float | None = None
         for score, idx in zip(scores, indices, strict=False):
             if idx == -1:
-                continue
-            if float(score) < threshold:
                 continue
             if idx < 0 or idx >= len(site["metadata"]):
                 continue
 
             chunk = site["metadata"][idx]
-            all_results.append(
-                {
-                    "chunk_id": chunk["chunk_id"],
-                    "text": chunk["text"],
-                    "title": chunk["title"],
-                    "url": chunk["url"],
-                    "scraped_date": chunk["scraped_date"],
-                    "score": float(score),
-                    "website_name": chunk["website_name"],
-                }
-            )
-            site_count += 1
+            result = {
+                "chunk_id": chunk["chunk_id"],
+                "text": chunk.get("text", chunk.get("content", "")),
+                "title": chunk["title"],
+                "url": chunk["url"],
+                "scraped_date": chunk.get("scraped_date", chunk.get("scraped_at", "")),
+                "score": float(score),
+                "website_name": chunk.get("website_name", chunk.get("source", site["site"])),
+            }
+            fallback_results.append(result)
+
+            if site_best_score is None or float(score) > site_best_score:
+                site_best_score = float(score)
+
+            if float(score) >= threshold:
+                all_results.append(result)
+                site_count += 1
 
         # Report how many results this site contributed after thresholding.
-        print(f"{site['site']}: {site_count} results found")
+        if site_best_score is None:
+            print(f"{site['site']}: 0 results found")
+        else:
+            print(f"{site['site']}: {site_count} results found (best score {site_best_score:.4f})")
+
+    # If the threshold filters everything out, fall back to the best raw matches
+    # so retrieval still returns useful candidates for testing and analysis.
+    if not all_results and fallback_results:
+        print(
+            f"No results met threshold {threshold:.2f}. "
+            "Falling back to best matches without threshold filtering."
+        )
+        return fallback_results
 
     return all_results
 
@@ -146,7 +164,7 @@ def retrieve_similar_chunks(
     base_dir: str = "app/embeddings/vector_index",
     top_k_per_site: int = 5,
     top_k_final: int = 10,
-    threshold: float = 0.3,
+    threshold: float = 0.1,
 ) -> list[dict]:
     """Load all site indexes, search them, rerank globally, and return the best chunks."""
     try:
@@ -183,7 +201,7 @@ def search(
     base_dir: str | Path = "app/embeddings/vector_index",
     *_unused_args,
     top_k: int = 10,
-    threshold: float = 0.3,
+    threshold: float = 0.1,
 ) -> list[dict]:
     """Compatibility wrapper around multi-site retrieval for existing callers."""
     # Accept either the vector-index directory directly or an old file path and normalize it.
