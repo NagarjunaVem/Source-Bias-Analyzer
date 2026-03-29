@@ -11,6 +11,7 @@ import numpy as np
 
 from app.embeddings.chunker import chunk_text
 from app.embeddings.vector_store import build_faiss_index, load_embedding_cache, save_index
+from app.input.news_pipeline.test_classifier import classify_url
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INPUT_ROOT = PROJECT_ROOT / "app" / "input" / "data"
@@ -97,7 +98,12 @@ def load_articles_for_source_type(source_type: str, files: list[Path]) -> list[d
 
         for record in records:
             content = str(record.get("content") or record.get("text") or "").strip()
+            url = str(record.get("url") or record.get("source_url") or "")
+            
             if not content:
+                continue
+            
+            if not classify_url(url, text=content):
                 continue
 
             articles.append(

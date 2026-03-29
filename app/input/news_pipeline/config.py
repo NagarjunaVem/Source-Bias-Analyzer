@@ -69,7 +69,7 @@ SEED_SOURCE_DEFINITIONS: list[dict[str, str]] = [
     {"name": "techcrunch",          "url": "https://techcrunch.com/latest/",                        "source_type": "web", "category": "technology"},
 
     # ── Indian News — RSS ──────────────────────────────────────────────────────
-    {"name": "ndtv_rss",            "url": "https://feeds.feedburner.com/ndtvnews-top-stories",      "source_type": "rss", "category": "india"},
+    # {"name": "ndtv_rss",            "url": "https://feeds.feedburner.com/ndtvnews-top-stories",      "source_type": "rss", "category": "india"},
     {"name": "the_hindu_rss",       "url": "https://www.thehindu.com/news/feeder/default.rss",       "source_type": "rss", "category": "india"},
     {"name": "india_today_rss",     "url": "https://www.indiatoday.in/rss/home",                    "source_type": "rss", "category": "india"},
     {"name": "firstpost_rss",       "url": "https://www.firstpost.com/rss/india.xml",               "source_type": "rss", "category": "india"},
