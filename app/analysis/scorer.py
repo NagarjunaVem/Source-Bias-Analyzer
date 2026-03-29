@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
+
+from app.analysis.json_utils import StructuredOutputError
 
 MODEL_NAME = "gemma2:9b"
 
@@ -95,12 +96,6 @@ SCORER_MODEL = ChatOllama(
     model=MODEL_NAME,
     temperature=0.1,
 )
-
-
-def _extract_json(text: str) -> str | None:
-    """Extract the first JSON object from model output."""
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    return match.group(0) if match else None
 
 
 def _clamp_score(value: Any) -> float:
@@ -231,6 +226,17 @@ def _fallback_result(raw_output: str) -> dict[str, Any]:
     }
 
 
+def _validate_scorer_payload(payload: Any) -> dict[str, Any]:
+    """Validate and normalize the scorer model payload."""
+    if not isinstance(payload, dict):
+        raise StructuredOutputError("Scorer payload must be a dictionary.")
+
+    if not isinstance(payload.get("component_scores", {}), dict):
+        raise StructuredOutputError("Scorer payload missing component_scores.")
+
+    return payload
+
+
 def score_article(article: str, evidence: str = "") -> dict[str, Any]:
     """Score one article against related evidence using calibrated post-processing."""
     chain = SCORER_PROMPT | SCORER_MODEL
@@ -242,13 +248,10 @@ def score_article(article: str, evidence: str = "") -> dict[str, Any]:
     )
 
     raw_output = response.content if isinstance(response.content, str) else str(response.content)
-    json_text = _extract_json(raw_output)
-    if not json_text:
-        return _fallback_result(raw_output)
-
     try:
-        parsed = json.loads(json_text)
-    except json.JSONDecodeError:
+        parsed = json.loads(raw_output)
+        parsed = _validate_scorer_payload(parsed)
+    except (json.JSONDecodeError, StructuredOutputError):
         return _fallback_result(raw_output)
 
     return _build_result(parsed, raw_output=raw_output, json_validity=1.0)

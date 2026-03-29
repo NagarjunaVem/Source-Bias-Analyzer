@@ -8,23 +8,6 @@ import os
 import faiss
 from rank_bm25 import BM25Okapi
 
-
-def load_index_with_gpu(index, site_name: str):
-    """Move a FAISS index to GPU when available, otherwise keep CPU."""
-    if hasattr(faiss, "StandardGpuResources"):
-        try:
-            res = faiss.StandardGpuResources()
-            gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
-            print(f"{site_name}: running on GPU")
-            return gpu_index
-        except Exception as e:
-            print(f"{site_name}: GPU failed, using CPU. Reason: {e}")
-            return index
-    else:
-        print(f"{site_name}: faiss-gpu not installed, using CPU")
-        return index
-
-
 def ensure_cosine_index(index):
     """Ensure the FAISS index uses inner product on normalized vectors."""
     if not isinstance(index, faiss.IndexFlatIP):
@@ -61,7 +44,6 @@ def load_all_indexes(base_dir: str) -> list[dict]:
 
         index = faiss.read_index(index_path)
         index = ensure_cosine_index(index)
-        index = load_index_with_gpu(index, site)
 
         with open(metadata_path, "r", encoding="utf-8") as file_handle:
             metadata = json.load(file_handle)
