@@ -1,5 +1,6 @@
 import numpy as np
-from embed import get_embedding
+
+from app.embeddings.embed import get_embedding
 
 
 def cosine_similarity(a, b):

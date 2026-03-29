@@ -220,3 +220,4 @@ data/
 logs/
 articles.index
 metadata.json
+embeddings.npy

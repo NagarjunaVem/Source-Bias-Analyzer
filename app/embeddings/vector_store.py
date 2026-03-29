@@ -1,4 +1,4 @@
-"""Simple FAISS helpers for Stage 3."""
+"""FAISS index build/load helpers for embedding storage."""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ from pathlib import Path
 
 import faiss
 import numpy as np
-
-from .embed import get_embedding
 
 INDEX_FILENAME = "articles.index"
 METADATA_FILENAME = "metadata.json"
@@ -86,28 +84,3 @@ def load_embedding_cache(save_dir: str) -> tuple[np.ndarray, list[dict]]:
     embeddings = np.load(embeddings_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     return np.asarray(embeddings, dtype=np.float32), metadata
-
-
-def search(
-    query: str,
-    index: faiss.Index,
-    metadata: list[dict],
-    top_k: int = 5,
-) -> list[dict]:
-    """Search similar chunk records."""
-    if not query or top_k <= 0 or index.ntotal == 0:
-        return []
-
-    query_vector = get_embedding(query).reshape(1, -1)
-    query_vector = np.asarray(query_vector, dtype=np.float32)
-    faiss.normalize_L2(query_vector)
-    distances, indices = index.search(query_vector, min(top_k, index.ntotal))
-
-    results: list[dict] = []
-    for score, idx in zip(distances[0], indices[0], strict=False):
-        if idx < 0 or idx >= len(metadata):
-            continue
-        item = dict(metadata[idx])
-        item["score"] = float(score)
-        results.append(item)
-    return results
