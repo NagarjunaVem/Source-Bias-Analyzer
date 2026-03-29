@@ -11,6 +11,12 @@ STANCE_SUPPORT = "SUPPORT"
 STANCE_CONTRADICT = "CONTRADICT"
 STANCE_NEUTRAL = "NEUTRAL"
 NEGATION_WORDS = {"no", "not", "never", "none", "without", "denied", "denies", "deny", "refuted", "rejects"}
+TOPIC_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "if", "then", "than", "that", "this", "these", "those", "is", "are",
+    "was", "were", "be", "been", "being", "to", "of", "in", "on", "for", "from", "by", "with", "as", "at",
+    "it", "its", "their", "they", "them", "he", "she", "his", "her", "said", "says", "reported", "according",
+    "will", "would", "could", "should", "may", "might", "into", "about", "after", "before", "during", "over",
+}
 
 
 def _tokenize(text: str) -> list[str]:
@@ -31,6 +37,10 @@ def _negation_present(text: str) -> bool:
     return bool(tokens & NEGATION_WORDS)
 
 
+def _topic_tokens(text: str) -> set[str]:
+    return {token for token in _tokenize(text) if token not in TOPIC_STOPWORDS and len(token) > 2}
+
+
 def _jaccard_similarity(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
@@ -47,6 +57,18 @@ def _cosine_similarity(left: Counter[str], right: Counter[str]) -> float:
     return numerator / (left_norm * right_norm)
 
 
+def _is_relevant_evidence(claim: str, evidence_text: str) -> bool:
+    """Require minimal topical overlap before using evidence for stance decisions."""
+    claim_topics = _topic_tokens(claim)
+    evidence_topics = _topic_tokens(evidence_text)
+    if not claim_topics or not evidence_topics:
+        return False
+
+    topic_overlap = len(claim_topics & evidence_topics)
+    named_overlap = len(_extract_named_tokens(claim) & _extract_named_tokens(evidence_text))
+    return topic_overlap >= 2 or (topic_overlap >= 1 and named_overlap >= 1)
+
+
 def normalize_evidence_item(item: dict[str, Any]) -> dict[str, Any]:
     """Normalize retrieval output into the evidence shape used by analysis."""
     return {
@@ -61,6 +83,9 @@ def normalize_evidence_item(item: dict[str, Any]) -> dict[str, Any]:
 
 def classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
     """Classify a single evidence chunk as supporting, contradicting, or neutral."""
+    if not _is_relevant_evidence(claim, evidence_text):
+        return STANCE_NEUTRAL, 0.05, "low_topic_overlap"
+
     claim_tokens = _tokenize(claim)
     evidence_tokens = _tokenize(evidence_text)
     claim_token_set = set(claim_tokens)
@@ -74,13 +99,24 @@ def classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
     evidence_numbers = _extract_numbers(evidence_text)
     number_conflict = bool(claim_numbers and evidence_numbers and claim_numbers != evidence_numbers)
     negation_conflict = _negation_present(claim) != _negation_present(evidence_text)
+    contradiction_signal = (0.55 * semantic_similarity) + (0.30 * lexical_similarity) + (0.15 * named_overlap)
 
-    if (number_conflict and lexical_similarity >= 0.20) or (negation_conflict and semantic_similarity >= 0.30):
+    if (
+        number_conflict
+        and lexical_similarity >= 0.45
+        and semantic_similarity >= 0.35
+        and contradiction_signal >= 0.42
+    ) or (
+        negation_conflict
+        and semantic_similarity >= 0.55
+        and lexical_similarity >= 0.20
+        and contradiction_signal >= 0.48
+    ):
         confidence = min(1.0, 0.55 + lexical_similarity * 0.25 + semantic_similarity * 0.20)
         return STANCE_CONTRADICT, confidence, "entity_or_quantity_conflict"
 
     support_signal = (0.45 * lexical_similarity) + (0.40 * semantic_similarity) + (0.15 * named_overlap)
-    if support_signal >= 0.35:
+    if support_signal >= 0.42:
         confidence = min(1.0, 0.45 + support_signal)
         return STANCE_SUPPORT, confidence, "semantic_alignment"
 
@@ -118,15 +154,41 @@ def detect_claim_stance(claim: str, evidence_items: list[dict[str, Any]]) -> dic
         analyzed_evidence.append(enriched_item)
         stance_buckets[stance].append(enriched_item)
 
-    if stance_buckets[STANCE_CONTRADICT]:
+    support_bucket = stance_buckets[STANCE_SUPPORT]
+    contradict_bucket = stance_buckets[STANCE_CONTRADICT]
+    neutral_bucket = stance_buckets[STANCE_NEUTRAL]
+
+    support_avg = (
+        sum(item["stance_confidence"] for item in support_bucket) / len(support_bucket)
+        if support_bucket else 0.0
+    )
+    contradict_avg = (
+        sum(item["stance_confidence"] for item in contradict_bucket) / len(contradict_bucket)
+        if contradict_bucket else 0.0
+    )
+
+    if (
+        len(contradict_bucket) >= 2
+        and contradict_avg >= 0.72
+        and len(contradict_bucket) > len(support_bucket)
+        and contradict_avg >= support_avg + 0.08
+    ):
         overall_stance = STANCE_CONTRADICT
-        chosen_bucket = stance_buckets[STANCE_CONTRADICT]
-    elif stance_buckets[STANCE_SUPPORT]:
+        chosen_bucket = contradict_bucket
+    elif (
+        support_bucket
+        and support_avg >= 0.60
+        and (
+            not contradict_bucket
+            or support_avg >= contradict_avg + 0.05
+            or len(support_bucket) >= len(contradict_bucket)
+        )
+    ):
         overall_stance = STANCE_SUPPORT
-        chosen_bucket = stance_buckets[STANCE_SUPPORT]
+        chosen_bucket = support_bucket
     else:
         overall_stance = STANCE_NEUTRAL
-        chosen_bucket = stance_buckets[STANCE_NEUTRAL]
+        chosen_bucket = neutral_bucket or (support_bucket + contradict_bucket)
 
     chosen_bucket = sorted(
         chosen_bucket,
@@ -147,4 +209,3 @@ def detect_claim_stance(claim: str, evidence_items: list[dict[str, Any]]) -> dic
         "neutral_count": len(stance_buckets[STANCE_NEUTRAL]),
         "all_evidence": analyzed_evidence,
     }
-

@@ -150,16 +150,20 @@ def filter_site_indexes(site_indexes: list[dict], plan: dict[str, Any]) -> list[
         site_name = _normalize_source_name(str(site.get("site", "")))
         if any(source in site_name or site_name in source for source in planned_sources):
             filtered_sites.append(site)
+    if not filtered_sites:
+        print("Planner source filter matched no indexed sites; falling back to all sites.")
+        return site_indexes
     return filtered_sites
 
 
 def filter_results(results: list[dict], plan: dict[str, Any]) -> list[dict]:
     """Filter retrieval results using source and recency constraints."""
     filtered_results = list(results)
+    source_filtered_results = list(filtered_results)
 
     planned_sources = plan.get("sources")
     if planned_sources:
-        filtered_results = [
+        source_filtered_results = [
             result
             for result in filtered_results
             if any(
@@ -168,6 +172,10 @@ def filter_results(results: list[dict], plan: dict[str, Any]) -> list[dict]:
                 for source in planned_sources
             )
         ]
+        if source_filtered_results:
+            filtered_results = source_filtered_results
+        else:
+            print("Planner result filter matched no retrieved sources; keeping unfiltered results.")
 
     recency_days = plan.get("recency_days")
     if recency_days is not None:

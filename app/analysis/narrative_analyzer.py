@@ -8,24 +8,11 @@ from typing import Any
 
 from app.analysis.claim_extractor import split_into_candidate_sentences
 from app.analysis.json_utils import ensure_dict, ensure_list, generate_validated_json
+from app.analysis.lexicon import BIAS_LEXICON
 
-BIAS_LEXICON = {
-    "shocking",
-    "outrageous",
-    "slam",
-    "blasted",
-    "admits",
-    "furious",
-    "massive",
-    "dramatic",
-    "chaotic",
-    "propaganda",
-    "radical",
-    "extreme",
-    "disaster",
-    "catastrophic",
-}
-
+NARRATIVE_MODEL_NAME = "qwen2.5:7b"
+NARRATIVE_TIMEOUT_SECONDS = 10
+NARRATIVE_MAX_RETRIES = 1
 
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", text.lower())
@@ -61,17 +48,17 @@ def _fallback_narrative_analysis(article_text: str, evidence_items: list[dict[st
 
     bias_hits = [token for token in _tokenize(article_text) if token in BIAS_LEXICON]
     selective_emphasis = 1.0 - overlap
-    framing_bias = min(1.0, (len(bias_hits) / max(len(article_tokens), 1)) * 25.0)
+    framing_bias = min(1.0, (len(bias_hits) / max(len(article_tokens), 1)) * 35.0)
 
     return {
         "article_narrative": _extract_article_narrative(article_text),
         "source_narratives": _extract_source_narratives(evidence_items),
-        "framing_bias": "High framing bias detected." if framing_bias >= 0.45 else "Framing remains comparatively restrained.",
+        "framing_bias": "High framing bias detected." if framing_bias >= 0.35 else "Framing shows some restraint but still contains noticeable shaping.",
         "selective_emphasis": "The article emphasizes themes that appear underrepresented in retrieved evidence."
-        if selective_emphasis >= 0.45
-        else "The article broadly overlaps with retrieved source emphasis.",
-        "framing_bias_score": round(max(framing_bias, 0.05), 4),
-        "selective_emphasis_score": round(max(min(selective_emphasis, 1.0), 0.05), 4),
+        if selective_emphasis >= 0.35
+        else "The article overlaps with retrieved sources but still appears selectively framed in places.",
+        "framing_bias_score": round(max(framing_bias, 0.12), 4),
+        "selective_emphasis_score": round(max(min(selective_emphasis, 1.0), 0.12), 4),
     }
 
 
@@ -109,7 +96,7 @@ def analyze_narratives(article_text: str, evidence_items: list[dict[str, Any]]) 
         for item in evidence_items[:5]
     )
     prompt = f"""
-You are a media analysis system.
+You are a strict media framing analyst.
 Compare the input article's narrative to retrieved sources.
 Return only valid JSON with this exact schema:
 {{
@@ -126,8 +113,14 @@ Return only valid JSON with this exact schema:
 Rules:
 - Scores must be between 0 and 1.
 - Ground everything in the provided text.
+- Be strict and skeptical. Do not describe framing as restrained or balanced unless the source material clearly supports that conclusion.
+- If the article uses emotionally weighted wording, repeated alarm language, selective foregrounding, or unresolved tension, increase framing_bias_score.
+- If the article leaves out moderating context, competing interpretations, or neutral explanation that appears in the retrieved sources, increase selective_emphasis_score.
+- Do not treat overlap in topic alone as evidence of narrative alignment.
+- Prefer critical wording over flattering wording when the comparison is mixed.
 - Framing bias reflects emotionally loaded framing.
 - Selective emphasis reflects omission or overemphasis relative to sources.
+- Return JSON only, with no commentary before or after it.
 
 ARTICLE:
 {article_text[:2500]}
@@ -139,8 +132,8 @@ RETRIEVED SOURCES:
         prompt=prompt,
         validator=_validate_narrative_payload,
         fallback=fallback,
-        model="qwen2.5:7b",
-        timeout=45,
-        max_retries=3,
+        model=NARRATIVE_MODEL_NAME,
+        timeout=NARRATIVE_TIMEOUT_SECONDS,
+        max_retries=NARRATIVE_MAX_RETRIES,
     )
     return result.payload
