@@ -1,125 +1,79 @@
 """
 web_scraper.py
 --------------
-Infinite-depth BFS crawler for web sources.
-
-Algorithm
----------
-1. Start with the seed URL in a FIFO queue.
-2. Pop the front URL from the queue.
-3. Skip if already in this source's JSON (known_urls set — O(1) check).
-4. Fetch the page HTML.
-5. Extract article text — if content > 200 chars, save to JSON immediately.
-6. Extract all same-domain links from the page, add new ones to the back of the queue.
-7. Repeat until the queue is empty (all reachable same-domain pages visited).
-
-There is NO depth limit.  The BFS runs until the domain is exhausted.
-Dedup is per-source: a URL is skipped if it already exists in that source's JSON file.
+Implements a BFS crawler to discover and scrape articles from web sources.
 """
 from __future__ import annotations
-
 import asyncio
-from collections import deque
 from typing import Any
 from urllib.parse import urlparse
 
 from .base import BaseScraper, make_article
 from ..extractors import (
     extract_links_from_html,
+    is_probable_article_url,
     clean_article_html,
-    summarize_text,
-    generate_tags,
+    summarize_text
 )
 
-
 class WebScraper(BaseScraper):
-
-    async def scrape(self) -> None:
-        seed_url = self.source.url
-        seed_domain = urlparse(seed_url).netloc
-
-        # BFS queue: FIFO — true breadth-first traversal, NO depth limit
-        queue: deque[str] = deque([seed_url])
-
-        # local_seen prevents adding the same link to the queue twice
-        # within a single scrape session (even before it's saved to JSON)
-        local_seen: set[str] = {seed_url}
-
-        saved_count = 0
-        visited_count = 0
-
-        print(f"\n\033[96m{'='*70}\033[0m")
-        print(f"\033[96m🌐 [WEB BFS START] {self.source.name}\033[0m")
-        print(f"\033[96m   Seed: {seed_url}\033[0m")
-        print(f"\033[96m   Already in JSON: {len(self.known_urls)} articles\033[0m")
-        print(f"\033[96m{'='*70}\033[0m\n")
+    async def scrape(self) -> list[dict[str, Any]]:
+        self.logger.info("Starting Web BFS for: %s", self.source.url)
+        
+        # Queue stores tuples of (url, depth)
+        queue = [(self.source.url, 0)]
+        
+        # local_seen prevents infinite loops within a single scrape cycle
+        local_seen = {self.source.url}
+        
+        articles: list[dict[str, Any]] = []
+        seed_domain = urlparse(self.source.url).netloc
+        
+        # Fallback max depth if set to 0 to prevent true infinite loops
+        max_depth = self.settings.max_discovery_depth if self.settings.max_discovery_depth > 0 else 3
 
         while queue:
-            current_url = queue.popleft()
+            current_url, depth = queue.pop(0)
 
-            # ── Parallel check: skip if already in this source's JSON ─────
-            if self._is_known(current_url):
-                print(f"  \033[90m⏭️  [SKIP]\033[0m     {self.source.name:<20} | Already in JSON: {current_url[:80]}")
+            # Strict global dedup check
+            if current_url in self.global_seen and current_url != self.source.url:
                 continue
 
-            visited_count += 1
-            print(f"  \033[93m🔍 [SCRAPING]\033[0m  {self.source.name:<20} | ({len(queue)} queued) {current_url[:90]}")
-
-            # ── Fetch the page ────────────────────────────────────────────
-            html, final_url = await self._fetch_text(current_url)
-            if not html:
-                print(f"  \033[91m❌ [FAILED]\033[0m   {self.source.name:<20} | Could not fetch: {current_url[:80]}")
+            text, final_url = await self._fetch_text(current_url)
+            if not text:
                 continue
 
-            # ── Extract article content ───────────────────────────────────
-            extracted = clean_article_html(html, base_url=final_url)
-            content = str(extracted.get("content", ""))
+            # If it looks like an article URL, parse it
+            if current_url != self.source.url and is_probable_article_url(final_url):
+                extracted = clean_article_html(text, base_url=final_url)
+                content = str(extracted.get("content", ""))
 
-            # Save if we got meaningful text (skip the seed page itself
-            # unless it also has substantial article content)
-            if len(content) > 200:
-                headline = str(extracted.get("headline", "Untitled"))
-                keyword_tags = extracted.get("keyword_tags", [])
-                tags = generate_tags(headline, content, keyword_tags)
-                summary = summarize_text(content, max_sentences=3)
+                # Only save if we actually extracted meaningful text
+                if len(content) > 150: 
+                    articles.append(make_article(
+                        url=final_url,
+                        title=str(extracted.get("headline", "Untitled")),
+                        text=content,
+                        summary=summarize_text(content, max_sentences=3),
+                        tags=extracted.get("keyword_tags", []),
+                        source=self.source.name,
+                        category=self.source.category,
+                        published_at=None
+                    ))
 
-                article = make_article(
-                    url=final_url,
-                    title=headline,
-                    text=content,
-                    summary=summary,
-                    tags=tags,
-                    source=self.source.name,
-                    category=self.source.category,
-                    published_at=None,
-                )
+            # Stop extracting new links if we've hit our depth limit
+            if depth < max_depth:
+                links = extract_links_from_html(text, base_url=final_url)
+                for link_url, _ in links:
+                    link_domain = urlparse(link_url).netloc
+                    
+                    # BFS Rules: Stay on the same domain, skip seen URLs
+                    if link_domain == seed_domain and link_url not in local_seen and link_url not in self.global_seen:
+                        local_seen.add(link_url)
+                        queue.append((link_url, depth + 1))
 
-                # ── Parallel add: save to JSON + update known_urls set ────
-                self._save_article(article)
-                saved_count += 1
+            # Polite delay between internal requests
+            await asyncio.sleep(0.2)
 
-            # ── Extract links and enqueue new same-domain ones ────────────
-            links = extract_links_from_html(html, base_url=final_url)
-            new_links = 0
-            for link_url, _ in links:
-                link_domain = urlparse(link_url).netloc
-                if (
-                    link_domain == seed_domain
-                    and link_url not in local_seen
-                    and not self._is_known(link_url)
-                ):
-                    local_seen.add(link_url)
-                    queue.append(link_url)
-                    new_links += 1
-
-            if new_links > 0:
-                print(f"  \033[94m🔗 [LINKS]\033[0m    {self.source.name:<20} | +{new_links} new links, queue: {len(queue)}")
-
-            # Polite delay between requests
-            await asyncio.sleep(0.15)
-
-        print(f"\n\033[96m{'='*70}\033[0m")
-        print(f"\033[96m🏁 [WEB BFS DONE] {self.source.name}\033[0m")
-        print(f"\033[96m   Visited: {visited_count} pages | Saved: {saved_count} articles\033[0m")
-        print(f"\033[96m   Total in JSON: {len(self.known_urls)}\033[0m")
-        print(f"\033[96m{'='*70}\033[0m\n")
+        self.logger.info("Web %s yielded %d new articles.", self.source.name, len(articles))
+        return articles
