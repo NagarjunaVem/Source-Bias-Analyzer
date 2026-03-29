@@ -3,8 +3,8 @@ from typing import List
 
 def chunk_text(
     text: str,
-    chunk_size: int = 180,
-    overlap: int = 30
+    chunk_size: int = 140,
+    overlap: int = 25
 ) -> List[str]:
     """
     Split text into safer overlapping chunks for embedding and retrieval.
