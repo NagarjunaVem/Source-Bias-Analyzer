@@ -116,7 +116,14 @@ def classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
         return STANCE_CONTRADICT, confidence, "entity_or_quantity_conflict"
 
     support_signal = (0.45 * lexical_similarity) + (0.40 * semantic_similarity) + (0.15 * named_overlap)
-    if support_signal >= 0.42:
+    if (
+        support_signal >= 0.38
+        or (
+            semantic_similarity >= 0.34
+            and lexical_similarity >= 0.18
+            and named_overlap >= 0.08
+        )
+    ):
         confidence = min(1.0, 0.45 + support_signal)
         return STANCE_SUPPORT, confidence, "semantic_alignment"
 
@@ -177,11 +184,12 @@ def detect_claim_stance(claim: str, evidence_items: list[dict[str, Any]]) -> dic
         chosen_bucket = contradict_bucket
     elif (
         support_bucket
-        and support_avg >= 0.60
+        and support_avg >= 0.56
         and (
             not contradict_bucket
             or support_avg >= contradict_avg + 0.05
             or len(support_bucket) >= len(contradict_bucket)
+            or len(support_bucket) >= 2
         )
     ):
         overall_stance = STANCE_SUPPORT

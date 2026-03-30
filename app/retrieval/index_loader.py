@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 
 import faiss
 from rank_bm25 import BM25Okapi
@@ -29,6 +30,7 @@ def ensure_cosine_index(index):
     return index
 
 
+@lru_cache(maxsize=4)
 def load_all_indexes(base_dir: str) -> list[dict]:
     """Load every site index folder and prepare both FAISS and BM25 indexes."""
     loaded_sites: list[dict] = []

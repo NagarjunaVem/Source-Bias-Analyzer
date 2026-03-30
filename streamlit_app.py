@@ -27,6 +27,8 @@ from app.analysis.bias_detector import analyze_bias
 from app.analysis.lexicon import CATEGORY_COLORS
 from app.analysis.scorer import score_article
 from app.analysis.summarizer import summarize_retrieved_chunks
+from app.retrieval.index_loader import load_all_indexes
+from app.retrieval.faiss_retriever import embed_query
 from app.retrieval.faiss_retriever import search
 
 # base directory
@@ -96,23 +98,25 @@ class StreamlitLogWriter:
         return "\n".join(self.lines)
 
 
+def _log_with_timer(log_placeholder, log_writer: StreamlitLogWriter, started_at: float, message: str) -> None:
+    """Append a timed message to stdout-backed logs and refresh the Streamlit code block."""
+    elapsed = time.time() - started_at
+    print(f"[{elapsed:6.1f}s] {message}")
+    log_placeholder.code(log_writer.get_value(), language="text")
+
+
 def run_pipeline(article_text: str, log_placeholder):
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     log_writer = StreamlitLogWriter()
     started_at = time.time()
-    log_placeholder.code("Starting retrieval for the input article...", language="text")
+    log_placeholder.code("[   0.0s] Starting retrieval for the input article...", language="text")
     try:
         sys.stdout = log_writer
         sys.stderr = log_writer
-        print("Starting retrieval for the input article...")
+        _log_with_timer(log_placeholder, log_writer, started_at, "Starting retrieval for the input article...")
         results = search(article_text, INDEX_BASE_DIR, top_k=6)
-        log_placeholder.code(log_writer.get_value() or "Retrieval finished.", language="text")
-        print("Running claim verification, contradiction detection, and scoring...")
-        log_placeholder.code(
-            (log_writer.get_value() + "\nRunning claim verification, contradiction detection, and scoring...").strip(),
-            language="text",
-        )
+        _log_with_timer(log_placeholder, log_writer, started_at, "Running claim verification, contradiction detection, and scoring...")
         analyze_bias_kwargs = {
             "retrieval_base_dir": INDEX_BASE_DIR,
         }
@@ -128,9 +132,9 @@ def run_pipeline(article_text: str, log_placeholder):
         except TypeError as error:
             if "unexpected keyword argument" not in str(error):
                 raise
-            print("Loaded analyze_bias does not support optimized kwargs; retrying with compatibility mode.")
+            _log_with_timer(log_placeholder, log_writer, started_at, "Loaded analyze_bias does not support optimized kwargs; retrying with compatibility mode.")
             output = analyze_bias(article_text, retrieval_base_dir=INDEX_BASE_DIR)
-        print("Summarizing reranked evidence for downstream scoring...")
+        _log_with_timer(log_placeholder, log_writer, started_at, "Summarizing reranked evidence for downstream scoring...")
         summary_context = output.get("retrieved_summary_text", "")
         if not summary_context and results:
             summary_context = summarize_retrieved_chunks(results[:6], max_articles=3)
@@ -141,15 +145,25 @@ def run_pipeline(article_text: str, log_placeholder):
         evidence_text = "\n\n".join(evidence_lines)
         if summary_context:
             evidence_text = f"{summary_context}\n\nStructured Sources:\n{evidence_text}".strip()
-        print("Running calibrated score model...")
+        _log_with_timer(log_placeholder, log_writer, started_at, "Running calibrated score model...")
         calibrated_scores = score_article(article_text, evidence=evidence_text)
-        print(f"Completed in {time.time() - started_at:.1f}s.")
+        _log_with_timer(log_placeholder, log_writer, started_at, "Pipeline completed.")
     finally:
         sys.stdout = original_stdout
         sys.stderr = original_stderr
     final_logs = log_writer.get_value()
     log_placeholder.code(final_logs or "No logs captured.", language="text")
     return output, results, final_logs, calibrated_scores
+
+
+def warm_retrieval_stack() -> tuple[bool, str]:
+    """Warm indexes and the embedding model once per Streamlit session."""
+    try:
+        load_all_indexes(INDEX_BASE_DIR)
+        embed_query("energy market warmup")
+        return True, "Retrieval stack warmed successfully."
+    except Exception as error:
+        return False, f"Retrieval warmup did not fully complete: {error}"
 
 
 def render_score_card(title: str, value: float, inverse: bool = False) -> None:
@@ -239,11 +253,16 @@ def render_claim_analysis(claim_analysis: list[dict[str, Any]]) -> None:
         color = STANCE_COLORS.get(stance, STANCE_COLORS["NEUTRAL"])
         with st.expander(f"{stance}: {item.get('claim', '')}", expanded=False):
             st.markdown(
-                f"<div style='padding:0.6rem 0.8rem;border-left:6px solid {color};background:#f8fafc;'>"
-                f"<strong>Confidence:</strong> {item.get('stance_confidence', 0.0):.2f}<br>"
-                f"<strong>Support:</strong> {item.get('support_count', 0)} | "
-                f"<strong>Contradict:</strong> {item.get('contradict_count', 0)} | "
-                f"<strong>Neutral:</strong> {item.get('neutral_count', 0)}"
+                f"<div style='padding:0.6rem 0.8rem;border-left:6px solid {color};"
+                f"background:#f8fafc;color:#111827;border-radius:8px;'>"
+                f"<span style='color:#111827;font-weight:700;'>Confidence:</span> "
+                f"<span style='color:#111827;'>{item.get('stance_confidence', 0.0):.2f}</span><br>"
+                f"<span style='color:#111827;font-weight:700;'>Support:</span> "
+                f"<span style='color:#111827;'>{item.get('support_count', 0)}</span> | "
+                f"<span style='color:#111827;font-weight:700;'>Contradict:</span> "
+                f"<span style='color:#111827;'>{item.get('contradict_count', 0)}</span> | "
+                f"<span style='color:#111827;font-weight:700;'>Neutral:</span> "
+                f"<span style='color:#111827;'>{item.get('neutral_count', 0)}</span>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -800,6 +819,18 @@ if "last_analyzed_text" not in st.session_state:
     st.session_state.last_analyzed_text = ""
 if "calibrated_scores" not in st.session_state:
     st.session_state.calibrated_scores = {}
+if "startup_warmup_done" not in st.session_state:
+    with st.spinner("Preparing retrieval indexes and local models..."):
+        warmed, warmup_message = warm_retrieval_stack()
+    st.session_state.startup_warmup_done = True
+    st.session_state.startup_warmup_ok = warmed
+    st.session_state.startup_warmup_message = warmup_message
+
+if st.session_state.get("startup_warmup_message"):
+    if st.session_state.get("startup_warmup_ok"):
+        st.caption(st.session_state.startup_warmup_message)
+    else:
+        st.warning(st.session_state.startup_warmup_message)
 
 # input selector
 input_type = st.selectbox("Input Type", ["Text", "URL", "PDF"])
@@ -914,7 +945,7 @@ if st.session_state.analysis_output and st.session_state.last_analyzed_text == a
         render_retrieved_summary(output.get("retrieved_summary_text", ""))
 
         st.subheader("Source Mix")
-        render_bar_chart("How many results came from each source", build_source_chart_data(results), color="#16a34a")
+        render_count_bar_chart("How many results came from each source", build_source_chart_data(results), color="#16a34a")
         st.subheader("Source Credibility")
         render_bar_chart("Average credibility score by source", build_credibility_chart_data(results), color="#0f766e")
 

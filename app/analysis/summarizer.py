@@ -6,7 +6,7 @@ import re
 
 import requests
 
-SUMMARY_TIMEOUT_SECONDS = 7
+SUMMARY_TIMEOUT_SECONDS = 18
 MAX_SUMMARY_ARTICLES = 2
 
 

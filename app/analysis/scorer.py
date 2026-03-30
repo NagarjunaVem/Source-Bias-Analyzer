@@ -9,7 +9,7 @@ from app.analysis.json_utils import StructuredOutputError, generate_validated_js
 from app.analysis.lexicon import BIAS_LEXICON, CATEGORY_WEIGHTS, TERM_TO_CATEGORY
 
 MODEL_NAME = "phi3:mini"
-SCORER_TIMEOUT_SECONDS = 28
+SCORER_TIMEOUT_SECONDS = 60
 SCORER_MAX_RETRIES = 1
 MAX_ARTICLE_CHARS = 1600
 MAX_EVIDENCE_CHARS = 1800

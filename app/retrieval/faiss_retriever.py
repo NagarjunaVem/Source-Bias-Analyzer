@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import faiss
@@ -37,16 +38,26 @@ LOW_SIGNAL_TITLE_PATTERNS = (
 )
 QUERY_MAX_EMBED_CHARS = 2500
 QUERY_MIN_EMBED_CHARS = 400
+QUERY_EMBED_MAX_ATTEMPTS = 3
+QUERY_EMBED_RETRY_DELAY_SECONDS = 4.0
+_QUERY_EMBEDDER: OllamaEmbeddings | None = None
 
 
 def _is_ollama_runner_failure(error: Exception) -> bool:
     """Detect common Ollama runner crashes so we can degrade gracefully."""
-    message = str(error).lower()
-    return (
-        "llama runner process has terminated" in message
-        or "status code: 500" in message
-        or "ollama" in message and "terminated" in message
-    )
+    current: BaseException | None = error
+    seen_ids: set[int] = set()
+    while current is not None and id(current) not in seen_ids:
+        seen_ids.add(id(current))
+        message = str(current).lower()
+        if (
+            "llama runner process has terminated" in message
+            or "status code: 500" in message
+            or ("ollama" in message and "terminated" in message)
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _tokenize_for_relevance(text: str) -> set[str]:
@@ -54,6 +65,14 @@ def _tokenize_for_relevance(text: str) -> set[str]:
         token for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", str(text).lower())
         if token not in RETRIEVAL_STOPWORDS and len(token) > 2
     }
+
+
+def _get_query_embedder() -> OllamaEmbeddings:
+    """Reuse a single Ollama query embedder within the app process."""
+    global _QUERY_EMBEDDER
+    if _QUERY_EMBEDDER is None:
+        _QUERY_EMBEDDER = OllamaEmbeddings(model="nomic-embed-text")
+    return _QUERY_EMBEDDER
 
 
 def _prepare_query_text(query_text: str) -> str:
@@ -93,27 +112,40 @@ def _filter_irrelevant_results(query_text: str, results: list[dict]) -> list[dic
 
 def embed_query(query_text: str) -> np.ndarray:
     """Embed the user query with nomic-embed-text and normalize it for cosine search."""
-    try:
-        embedder = OllamaEmbeddings(model="nomic-embed-text")
-        candidate = _prepare_query_text(query_text)
-        while True:
-            try:
-                query_vector = embedder.embed_query(candidate)
-                break
-            except ResponseError as error:
-                message = str(error).lower()
-                if "input length exceeds the context length" not in message:
-                    raise
-                if len(candidate) <= QUERY_MIN_EMBED_CHARS:
-                    raise
-                next_length = max(QUERY_MIN_EMBED_CHARS, int(len(candidate) * 0.7))
-                candidate = candidate[:next_length]
-        query_embedding = np.array([query_vector]).astype("float32")
-        faiss.normalize_L2(query_embedding)
-        return query_embedding
-    except Exception as error:
-        print("Query embedding failed; Ollama embedding runner may be unavailable or unstable.")
-        raise RuntimeError("Query embedding failed") from error
+    embedder = _get_query_embedder()
+    candidate = _prepare_query_text(query_text)
+    last_error: Exception | None = None
+
+    for attempt in range(1, QUERY_EMBED_MAX_ATTEMPTS + 1):
+        try:
+            working_candidate = candidate
+            while True:
+                try:
+                    query_vector = embedder.embed_query(working_candidate)
+                    query_embedding = np.array([query_vector]).astype("float32")
+                    faiss.normalize_L2(query_embedding)
+                    return query_embedding
+                except ResponseError as error:
+                    message = str(error).lower()
+                    if "input length exceeds the context length" not in message:
+                        raise
+                    if len(working_candidate) <= QUERY_MIN_EMBED_CHARS:
+                        raise
+                    next_length = max(QUERY_MIN_EMBED_CHARS, int(len(working_candidate) * 0.7))
+                    working_candidate = working_candidate[:next_length]
+        except Exception as error:
+            last_error = error
+            if attempt < QUERY_EMBED_MAX_ATTEMPTS:
+                print(
+                    f"Query embedding attempt {attempt} failed; retrying in "
+                    f"{QUERY_EMBED_RETRY_DELAY_SECONDS:.0f}s..."
+                )
+                time.sleep(QUERY_EMBED_RETRY_DELAY_SECONDS)
+                continue
+            print("Query embedding failed; Ollama embedding runner may be unavailable or unstable.")
+            raise RuntimeError(f"Query embedding failed: {error}") from error
+    if last_error is not None:
+        raise RuntimeError(f"Query embedding failed: {last_error}") from last_error
 
 
 def retrieve_similar_chunks(
@@ -127,6 +159,7 @@ def retrieve_similar_chunks(
         retrieval_plan = plan_retrieval(query_text)
         print(f"Retrieval plan: {retrieval_plan}")
 
+        print("Loading site indexes...")
         site_indexes = load_all_indexes(base_dir)
         if not site_indexes:
             print("No site indexes could be loaded.")
