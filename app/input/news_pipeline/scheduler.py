@@ -41,6 +41,10 @@ def setup_logger():
 
 logger = setup_logger()
 
+# Universal database at project root — permanent archive of all scraped articles
+UNIVERSAL_DB_PATH = Path(__file__).resolve().parents[3] / "data"
+
+
 
 # ── Producer: Move data to queue ──────────────────────────────────────────────
 
@@ -87,39 +91,80 @@ def _append_to_master_jsonl(cycle_path: Path, output_base: Path):
     Read all .json files in a specific cycle folder and append them
     as JSON Lines (jsonl) to the master articles database.
     """
-    # The master jsonl file the build_index_pipeline expects
     master_jsonl_path = output_base / "new_articles_detailed.jsonl"
-    
     appended_count = 0
     with master_jsonl_path.open("a", encoding="utf-8") as master_file:
-        # Recursively find all json files in the cycle folder
         for json_file in cycle_path.rglob("*.json"):
             try:
                 data = json.loads(json_file.read_text(encoding="utf-8"))
                 if isinstance(data, list):
                     for article in data:
                         if isinstance(article, dict):
-                            # Write each article as a single line
                             master_file.write(json.dumps(article, ensure_ascii=False) + "\n")
                             appended_count += 1
             except Exception as e:
                 logger.error(f"Error reading {json_file.name}: {e}")
-
     logger.info("Consolidated %d total articles into master jsonl.", appended_count)
+
+
+def _append_to_universal_db(cycle_path: Path):
+    """
+    Append cycle's raw article data to the universal database at project root data/.
+    Articles are grouped by source type (web/rss) and source file name.
+    """
+    for source_type in ("web", "rss"):
+        source_dir = cycle_path / source_type
+        if not source_dir.exists():
+            continue
+
+        universal_dir = UNIVERSAL_DB_PATH / source_type
+        universal_dir.mkdir(parents=True, exist_ok=True)
+
+        for json_file in source_dir.glob("*.json"):
+            try:
+                new_articles = json.loads(json_file.read_text(encoding="utf-8"))
+                if not isinstance(new_articles, list):
+                    continue
+
+                dest = universal_dir / json_file.name
+                existing = []
+                if dest.exists():
+                    existing = json.loads(dest.read_text(encoding="utf-8"))
+                    if not isinstance(existing, list):
+                        existing = []
+
+                # Deduplicate by URL
+                existing_urls = {a.get("url") for a in existing if isinstance(a, dict)}
+                truly_new = [
+                    a for a in new_articles
+                    if isinstance(a, dict) and a.get("url") not in existing_urls
+                ]
+
+                if truly_new:
+                    merged = existing + truly_new
+                    dest.write_text(
+                        json.dumps(merged, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    logger.info(f"Universal DB: +{len(truly_new)} articles → {source_type}/{json_file.name}")
+            except Exception as e:
+                logger.error(f"Error appending to universal DB ({json_file.name}): {e}")
 
 
 async def index_worker(output_base: Path):
     """
     Background daemon that continuously checks the indexing_queue.
-    If a cycle folder is found, it processes it into the FAISS index
-    and then deletes the folder.
+    When a cycle folder is found:
+      A. Consolidate into master JSONL
+      B. Run build_index.process_cycle → embed + FAISS (vector_index/)
+      C. Append raw articles to universal database (data/)
+      D. Delete cycle folder
     """
     queue_dir = output_base / "indexing_queue"
     queue_dir.mkdir(parents=True, exist_ok=True)
 
     while True:
         try:
-            # 1. Grab all folders inside indexing_queue, sort by oldest first
             cycle_folders = sorted(
                 [f for f in queue_dir.iterdir() if f.is_dir()]
             )
@@ -129,28 +174,35 @@ async def index_worker(output_base: Path):
                 print(f"\033[1;35m🧠 [INDEX BUILDER] Processing {folder.name}\033[0m")
                 print(f"\033[1;35m{'='*70}\033[0m\n")
 
-                # Step A: Consolidate scraped separate JSONs into the master JSONL
+                # Step A: Consolidate scraped JSONs into master JSONL
                 _append_to_master_jsonl(folder, output_base)
 
-                # Step B: Trigger the isolated Neural Embeddings generation for this specific cycle!
-                logger.info(f"Triggering raw Vector Generating Pipeline for new cycle data...")
-                from app.input.news_pipeline.queue_embedder import process_cycle_embeddings
-                
-                success = await process_cycle_embeddings(folder, output_base)
+                # Step B: Embed + FAISS via build_index
+                logger.info("Triggering build_index pipeline for cycle data...")
+                try:
+                    from app.embeddings.build_index import process_cycle
+                    success = await process_cycle(folder)
+                except ImportError as e:
+                    logger.error(f"Missing AI dependencies: {e}")
+                    success = False
+
                 if not success:
-                    logger.warning("Embedding tools unavailable or failed. Retrying next tick.")
+                    logger.warning("Build index failed or unavailable. Cycle folder kept. Retrying next tick.")
                     break
-                
-                # Step C: Delete ("scrap") the cycle folder after a successful independent embedding pass
-                logger.info(f"Raw Embedding Vectors Built Successfully. Scrapping folder '{folder.name}' to save drive space...")
+
+                # Step C: Append to universal database (data/)
+                logger.info("Appending cycle data to universal database...")
+                _append_to_universal_db(folder)
+
+                # Step D: Delete cycle folder
+                logger.info(f"Cycle processed. Deleting '{folder.name}'...")
                 shutil.rmtree(folder)
-                
-                print(f"\033[1;32m✅ Successfully scrapped generic Queue file! Waiting for next scraper drop-off.\033[0m\n")
+
+                print(f"\033[1;32m✅ Cycle '{folder.name}' complete — FAISS updated + universal DB appended.\033[0m\n")
 
         except Exception as e:
             logger.exception(f"Index Worker encountered an error: {e}")
 
-        # Sleep a bit before checking the queue again
         await asyncio.sleep(60)
 
 

@@ -171,17 +171,18 @@ def build_sources(discovery_file_path: Path) -> list[Source]:
 
 
 def load_settings() -> CrawlSettings:
+    PROJECT_ROOT = Path(__file__).resolve().parents[3]
     return CrawlSettings(
         global_workers=int(os.getenv("CRAWLER_GLOBAL_WORKERS", "30")),
         per_domain_concurrency=int(os.getenv("CRAWLER_PER_DOMAIN_CONCURRENCY", "3")),
         request_timeout_sec=int(os.getenv("CRAWLER_REQUEST_TIMEOUT_SEC", "30")),
         max_retries=int(os.getenv("CRAWLER_MAX_RETRIES", "3")),
         backoff_base_sec=float(os.getenv("CRAWLER_BACKOFF_BASE_SEC", "1.5")),
-        cycle_interval_minutes=int(os.getenv("CRAWLER_CYCLE_INTERVAL_MINUTES", "300")),
-        output_base_path=Path(os.getenv("OUTPUT_BASE_PATH", "data")),
-        output_failed_jsonl_path=Path(os.getenv("OUTPUT_FAILED_JSONL_PATH", "data/failed_articles.jsonl")),
-        metadata_main_path=Path(os.getenv("MAIN_METADATA_PATH", "data/main_metadata.json")),
-        discovery_file_path=Path(os.getenv("DISCOVERY_FILE_PATH", "data/discovery_sources.json")),
+        cycle_interval_minutes=int(os.getenv("CRAWLER_CYCLE_INTERVAL_MINUTES", "1")),
+        output_base_path=Path(os.getenv("OUTPUT_BASE_PATH", str(PROJECT_ROOT / "app" / "input" / "data"))),
+        output_failed_jsonl_path=Path(os.getenv("OUTPUT_FAILED_JSONL_PATH", str(PROJECT_ROOT / "data" / "failed_articles.jsonl"))),
+        metadata_main_path=Path(os.getenv("MAIN_METADATA_PATH", str(PROJECT_ROOT / "data" / "main_metadata.json"))),
+        discovery_file_path=Path(os.getenv("DISCOVERY_FILE_PATH", str(PROJECT_ROOT / "data" / "discovery_sources.json"))),
         verbose_progress=os.getenv("CRAWLER_VERBOSE_PROGRESS", "true").strip().lower() in {"1", "true", "yes", "on"},
         progress_interval_sec=int(os.getenv("CRAWLER_PROGRESS_INTERVAL_SEC", "5")),
         insecure_ssl_fallback=os.getenv("CRAWLER_INSECURE_SSL_FALLBACK", "false").strip().lower()

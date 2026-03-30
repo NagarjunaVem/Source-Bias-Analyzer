@@ -47,7 +47,7 @@ def main():
     print("             SOURCE-BIAS-ANALYZER Pipeline")
     print("=" * 60)
     print(" 1. Start Continuous Scraper Loop           (Terminal A)")
-    print(" 2. Start Background Embedder Queue Worker  (Terminal B)")
+    print(" 2. Start Index Scanner (FAISS Builder)      (Terminal B)")
     print(" 3. Run Manual Bias Analyzer Test           (Your Friend's Setup)")
     print("=" * 60)
     
@@ -58,7 +58,7 @@ def main():
         from app.input.news_pipeline.scheduler import start_scraper_only
         asyncio.run(start_scraper_only())
     elif choice == "2":
-        print("\nStarting Background Embedder Queue... (Press Ctrl+C to Stop)\n")
+        print("\nStarting Index Scanner (polls every 60s)... (Press Ctrl+C to Stop)\n")
         from app.input.news_pipeline.scheduler import start_embedder_only
         asyncio.run(start_embedder_only())
     elif choice == "3":

@@ -283,5 +283,55 @@ async def build_index_pipeline() -> dict[str, np.ndarray]:
     return results
 
 
+async def process_cycle(cycle_folder: Path) -> bool:
+    """Process one cycle folder: embed new articles and APPEND to per-domain FAISS indexes."""
+    try:
+        from app.embeddings.vector_store import append_to_index
+    except ImportError as e:
+        print(f"[ERROR] Cannot import FAISS dependencies: {e}")
+        return False
+
+    # Discover web/ and rss/ inside the cycle folder
+    source_files: dict[str, list[Path]] = {}
+    for subdir in sorted(p for p in cycle_folder.iterdir() if p.is_dir()):
+        if subdir.name in ("web", "rss"):
+            files = sorted([*subdir.glob("*.json"), *subdir.glob("*.jsonl")])
+            if files:
+                source_files[subdir.name] = files
+
+    if not source_files:
+        print("No JSON files found in cycle folder.")
+        return True
+
+    print(f"Found source types: {list(source_files.keys())}")
+
+    grouped_articles = group_articles_by_domain(source_files)
+    print(f"Found {len(grouped_articles)} domain groups")
+
+    for domain_group, articles in grouped_articles.items():
+        print(f"\n  Domain: {domain_group} — {len(articles)} articles")
+
+        chunk_metadata = build_chunk_metadata(articles)
+        if not chunk_metadata:
+            print(f"  No chunks for {domain_group}, skipping")
+            continue
+
+        print(f"  Chunks: {len(chunk_metadata)}")
+        save_dir = SAVE_ROOT / domain_group
+
+        embeddings = build_embeddings_incrementally(chunk_metadata, save_dir)
+        if embeddings.size == 0:
+            print(f"  No embeddings for {domain_group}")
+            continue
+
+        append_to_index(
+            new_embeddings=embeddings,
+            new_metadata=chunk_metadata,
+            save_dir=str(save_dir),
+        )
+
+    return True
+
+
 if __name__ == "__main__":
     asyncio.run(build_index_pipeline())
