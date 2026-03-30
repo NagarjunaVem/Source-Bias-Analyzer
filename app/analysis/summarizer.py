@@ -6,6 +6,9 @@ import re
 
 import requests
 
+SUMMARY_TIMEOUT_SECONDS = 60
+MAX_SUMMARY_ARTICLES = 2
+
 
 def deduplicate_chunks(results: list[dict]) -> list[dict]:
     """Remove near-duplicate retrieved chunks using simple word overlap."""
@@ -88,7 +91,7 @@ def deduplicate_chunks(results: list[dict]) -> list[dict]:
 def summarize_chunk(text: str) -> str:
     """Summarize one chunk with gemma2:9b using a strict no-outside-knowledge prompt."""
     # Build the exact prompt that forces the model to stay grounded in the provided text.
-    prompt = f"""You are a strict summarizer. Your job is to summarize ONLY the content provided below.
+    prompt = f"""You are a strict grounded summarizer. Your job is to summarize ONLY the content provided below.
 
     STRICT RULES YOU MUST FOLLOW:
     1. Do NOT add any information from your own knowledge or training data
@@ -96,11 +99,15 @@ def summarize_chunk(text: str) -> str:
     3. ONLY remove content that is clearly website noise:
        navigation text, cookie notices, advertisements, unrelated boilerplate
     4. KEEP all claims, statements, facts, opinions, and perspectives
-       that are related to the article topic — even if they seem generic
-    5. Do NOT judge whether a claim is important — if it is about the topic, keep it
-    6. Output exactly 3 concise bullet points
-    7. Each bullet point must come directly from the text below — nothing else
-    8. Do NOT add any outside knowledge — only what is written below
+       that are related to the article topic, even if they seem generic
+    5. Do NOT judge whether a claim is important; if it is about the topic, keep it
+    6. Preserve uncertainty, attribution, disagreement, and speculation exactly as presented
+    7. Do NOT rewrite predictions or opinions as established facts
+    8. Do NOT soften strong wording and do NOT invent balance that is not present
+    9. If the text is opinionated, speculative, or forecast-driven, make that explicit in the bullets
+    10. Output exactly 3 concise bullet points
+    11. Each bullet point must come directly from the text below and nothing else
+    12. Do NOT add any outside knowledge; only use what is written below
 
     Text to summarize:
     {text}
@@ -116,7 +123,7 @@ def summarize_chunk(text: str) -> str:
                 "prompt": prompt,
                 "stream": False,
             },
-            timeout=60,
+            timeout=SUMMARY_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         return response.json()["response"]
@@ -124,7 +131,7 @@ def summarize_chunk(text: str) -> str:
         return text
 
 
-def summarize_retrieved_chunks(results: list[dict]) -> str:
+def summarize_retrieved_chunks(results: list[dict], max_articles: int = MAX_SUMMARY_ARTICLES) -> str:
     """Deduplicate chunks, rebuild article-level context, and summarize each source article."""
     # First remove near-identical retrieved chunks so duplicate content is summarized only once.
     unique_results = deduplicate_chunks(results)
@@ -156,14 +163,14 @@ def summarize_retrieved_chunks(results: list[dict]) -> str:
 
     # Summarize each reconstructed article instead of each individual chunk.
     summaries: list[str] = []
-    for article_key in article_order:
+    for article_key in article_order[:max_articles]:
         article = grouped_articles[article_key]
         ordered_chunks = sorted(
             article["chunks"],
             key=lambda chunk: (int(chunk.get("chunk_id", 0)), -float(chunk.get("score", 0.0))),
         )
         article_text = " ".join(str(chunk.get("text", "")) for chunk in ordered_chunks).strip()
-        article_text = article_text[:2400]
+        article_text = article_text[:1400]
         summary = summarize_chunk(article_text)
         summaries.append(
             f"[{article['website_name']} | {article['title']} | Score: {article['score']:.2f}]\n{summary}"

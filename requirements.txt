@@ -19,3 +19,6 @@ tqdm
 streamlit
 fitz
 pymupdf
+torch
+sentence_transformers
+rank_bm25
