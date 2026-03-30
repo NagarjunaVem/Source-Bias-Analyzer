@@ -1,4 +1,5 @@
 import sys
+import subprocess
 from pathlib import Path
 
 # Setup the system path so Python can find the "app" module
@@ -10,6 +11,9 @@ from app.analysis.bias_detector import analyze_bias
 
 INDEX_PATH = "app/embeddings/vector_index/articles.index"
 CHUNKS_PATH = "app/embeddings/vector_index/metadata.json"
+
+# Absolute path to streamlit_app.py at project root
+STREAMLIT_APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
 
 
 def test_bias_analyzer():
@@ -42,16 +46,41 @@ def test_bias_analyzer():
     print("\n=== RESULT ===\n", analyze_bias(combined_input))
 
 
+def launch_streamlit():
+    """Launch the Streamlit dashboard UI."""
+    if not STREAMLIT_APP_PATH.exists():
+        print(f"\n[ERROR] streamlit_app.py not found at: {STREAMLIT_APP_PATH}")
+        return
+
+    print(f"\n🚀 Launching Streamlit Dashboard...")
+    print(f"   App: {STREAMLIT_APP_PATH}")
+    print(f"   URL: http://localhost:8501")
+    print(f"   Press Ctrl+C to stop.\n")
+
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "streamlit", "run", str(STREAMLIT_APP_PATH)],
+            check=True,
+        )
+    except KeyboardInterrupt:
+        print("\nStreamlit stopped.")
+    except FileNotFoundError:
+        print("\n[ERROR] streamlit is not installed. Run: pip install streamlit")
+    except subprocess.CalledProcessError as e:
+        print(f"\n[ERROR] Streamlit exited with code {e.returncode}")
+
+
 def main():
     print("=" * 60)
     print("             SOURCE-BIAS-ANALYZER Pipeline")
     print("=" * 60)
     print(" 1. Start Continuous Scraper Loop           (Terminal A)")
     print(" 2. Start Index Scanner (FAISS Builder)      (Terminal B)")
-    print(" 3. Run Manual Bias Analyzer Test           (Your Friend's Setup)")
+    print(" 3. Launch Streamlit Dashboard               (Browser UI)")
+    print(" 4. Run Manual Bias Analyzer Test            (CLI Test)")
     print("=" * 60)
     
-    choice = input("\nEnter choice (1, 2, or 3): ").strip()
+    choice = input("\nEnter choice (1, 2, 3, or 4): ").strip()
     
     if choice == "1":
         print("\nStarting Automated Crawler... (Press Ctrl+C to Stop)\n")
@@ -62,6 +91,8 @@ def main():
         from app.input.news_pipeline.scheduler import start_embedder_only
         asyncio.run(start_embedder_only())
     elif choice == "3":
+        launch_streamlit()
+    elif choice == "4":
         test_bias_analyzer()
     else:
         print("Invalid choice, exiting.")
