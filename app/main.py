@@ -46,17 +46,22 @@ def main():
     print("=" * 60)
     print("             SOURCE-BIAS-ANALYZER Pipeline")
     print("=" * 60)
-    print(" 1. Start Continuous Deep Scraper & Index Queue (Your Setup)")
-    print(" 2. Run Manual Bias Analyzer Test (Your Friend's Setup)")
+    print(" 1. Start Continuous Scraper Loop           (Terminal A)")
+    print(" 2. Start Background Embedder Queue Worker  (Terminal B)")
+    print(" 3. Run Manual Bias Analyzer Test           (Your Friend's Setup)")
     print("=" * 60)
     
-    choice = input("\nEnter choice (1 or 2): ").strip()
+    choice = input("\nEnter choice (1, 2, or 3): ").strip()
     
     if choice == "1":
-        print("\nStarting Automated Crawler and Queue... (Press Ctrl+C to Stop)\n")
-        from app.input.news_pipeline.scheduler import main as scheduler_main
-        asyncio.run(scheduler_main())
+        print("\nStarting Automated Crawler... (Press Ctrl+C to Stop)\n")
+        from app.input.news_pipeline.scheduler import start_scraper_only
+        asyncio.run(start_scraper_only())
     elif choice == "2":
+        print("\nStarting Background Embedder Queue... (Press Ctrl+C to Stop)\n")
+        from app.input.news_pipeline.scheduler import start_embedder_only
+        asyncio.run(start_embedder_only())
+    elif choice == "3":
         test_bias_analyzer()
     else:
         print("Invalid choice, exiting.")

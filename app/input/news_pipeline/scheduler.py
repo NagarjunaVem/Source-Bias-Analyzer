@@ -132,21 +132,20 @@ async def index_worker(output_base: Path):
                 # Step A: Consolidate scraped separate JSONs into the master JSONL
                 _append_to_master_jsonl(folder, output_base)
 
-                # Step B: Trigger the machine-learning embedding/indexing pipeline
-                logger.info("Triggering vector index build...")
-                try:
-                    from app.embeddings.build_index import build_index_pipeline
-                    await build_index_pipeline()
-                except ImportError as ie:
-                    logger.error(f"Waiting for your friend to finish the embeddings pipeline: {ie}")
-                    logger.info("Cycle folder left in queue temporarily. Will retry in 60 seconds.")
-                    break  # Break out of the folder loop, retry later
+                # Step B: Trigger the isolated Neural Embeddings generation for this specific cycle!
+                logger.info(f"Triggering raw Vector Generating Pipeline for new cycle data...")
+                from app.input.news_pipeline.queue_embedder import process_cycle_embeddings
                 
-                # Step C: Delete ("scrap") the cycle folder after a successful index build
-                logger.info(f"Indexing complete. Scrapping folder '{folder.name}' to save space...")
+                success = await process_cycle_embeddings(folder, output_base)
+                if not success:
+                    logger.warning("Embedding tools unavailable or failed. Retrying next tick.")
+                    break
+                
+                # Step C: Delete ("scrap") the cycle folder after a successful independent embedding pass
+                logger.info(f"Raw Embedding Vectors Built Successfully. Scrapping folder '{folder.name}' to save drive space...")
                 shutil.rmtree(folder)
                 
-                print(f"\033[1;32m✅ Successfully scrapped processed queue item.\033[0m\n")
+                print(f"\033[1;32m✅ Successfully scrapped generic Queue file! Waiting for next scraper drop-off.\033[0m\n")
 
         except Exception as e:
             logger.exception(f"Index Worker encountered an error: {e}")
@@ -209,28 +208,21 @@ async def crawler_loop(settings):
         await asyncio.sleep(5)
 
 
-async def main():
+async def start_scraper_only():
     """
-    Spins off both the background queue monitor (Consumer)
-    and the main scraper loop (Producer).
+    Spins up strictly the Scraper Loop (Producer).
     """
     settings = load_settings()
+    await crawler_loop(settings)
 
-    # Create the background task for the Index Builder Queue
-    index_task = asyncio.create_task(
-        index_worker(settings.output_base_path),
-        name="IndexWorkerDaemon"
-    )
 
-    # Run the Crawler Loop on the main execution thread
-    crawler_task = asyncio.create_task(
-        crawler_loop(settings),
-        name="CrawlerProducerLoop"
-    )
-
-    # Gather them (they both loop infinitely)
-    await asyncio.gather(crawler_task, index_task)
+async def start_embedder_only():
+    """
+    Spins up strictly the background queue monitor (Consumer).
+    """
+    settings = load_settings()
+    await index_worker(settings.output_base_path)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    print("Use main.py to start separated pipelines.")
