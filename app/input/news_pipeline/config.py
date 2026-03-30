@@ -178,7 +178,7 @@ def load_settings() -> CrawlSettings:
         request_timeout_sec=int(os.getenv("CRAWLER_REQUEST_TIMEOUT_SEC", "30")),
         max_retries=int(os.getenv("CRAWLER_MAX_RETRIES", "3")),
         backoff_base_sec=float(os.getenv("CRAWLER_BACKOFF_BASE_SEC", "1.5")),
-        cycle_interval_minutes=int(os.getenv("CRAWLER_CYCLE_INTERVAL_MINUTES", "1")),
+        cycle_interval_minutes=int(os.getenv("CRAWLER_CYCLE_INTERVAL_MINUTES", "120")),
         output_base_path=Path(os.getenv("OUTPUT_BASE_PATH", str(PROJECT_ROOT / "app" / "input" / "data"))),
         output_failed_jsonl_path=Path(os.getenv("OUTPUT_FAILED_JSONL_PATH", str(PROJECT_ROOT / "data" / "failed_articles.jsonl"))),
         metadata_main_path=Path(os.getenv("MAIN_METADATA_PATH", str(PROJECT_ROOT / "data" / "main_metadata.json"))),
