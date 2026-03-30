@@ -44,12 +44,12 @@ def compute_scores(
     neutral_ratio = neutral_total / max(support_total + contradict_total + neutral_total, 1)
 
     factual_accuracy = _clamp(
-        0.55 * support_ratio
-        + 0.20 * min(evidence_density, 1.0)
-        + 0.15 * stance_confidence
-        + 0.10 * (1.0 - contradiction_ratio)
-        - 0.20 * neutral_ratio
-        - 0.12 * contradiction_count
+        0.48 * support_ratio
+        + 0.24 * min(evidence_density, 1.0)
+        + 0.18 * stance_confidence
+        + 0.14 * (1.0 - contradiction_ratio)
+        - 0.10 * neutral_ratio
+        - 0.10 * contradiction_count
     )
     narrative_bias = _clamp(
         0.55 * float(narrative_analysis.get("framing_bias_score", 0.0))
@@ -59,10 +59,10 @@ def compute_scores(
     imbalance = float(missing_viewpoints.get("imbalance_score", 1.0))
     completeness = _clamp(
         0.45 * (1.0 - imbalance)
-        + 0.20 * min(evidence_density, 1.0)
+        + 0.24 * min(evidence_density, 1.0)
         + 0.15 * support_ratio
         + 0.10 * (1.0 - contradiction_ratio)
-        - 0.20 * neutral_ratio
+        - 0.08 * neutral_ratio
     )
     confidence = _clamp(
         0.45 * min(evidence_density, 1.0)

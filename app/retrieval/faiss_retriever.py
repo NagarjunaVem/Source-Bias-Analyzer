@@ -151,11 +151,13 @@ def embed_query(query_text: str) -> np.ndarray:
 def retrieve_similar_chunks(
     query_text: str,
     base_dir: str = "app/embeddings/vector_index",
+    stage_label: str = "Retrieval",
 ) -> list[dict]:
     """Run the full hybrid retrieval pipeline and return the best final chunks."""
     retrieval_plan: dict | None = None
     site_indexes: list[dict] = []
     try:
+        print(f"=== {stage_label} ===")
         retrieval_plan = plan_retrieval(query_text)
         print(f"Retrieval plan: {retrieval_plan}")
 
@@ -221,6 +223,7 @@ def search(
     *_unused_args,
     top_k: int = TOP_K_FINAL_MAX,
     threshold: float = 0.3,
+    stage_label: str = "Retrieval",
 ) -> list[dict]:
     """Compatibility wrapper around the upgraded retrieval pipeline for existing callers."""
     normalized_base_dir = Path(base_dir)
@@ -230,6 +233,7 @@ def search(
     results = retrieve_similar_chunks(
         query_text=query,
         base_dir=str(normalized_base_dir),
+        stage_label=stage_label,
     )
     if top_k > 0:
         return results[:top_k]

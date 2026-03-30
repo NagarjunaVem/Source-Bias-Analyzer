@@ -74,9 +74,21 @@ def extract_text_from_pdf(file) -> str:
 class StreamlitLogWriter:
     """Capture print output and mirror it into a Streamlit placeholder."""
 
-    def __init__(self) -> None:
+    def __init__(self, started_at: float | None = None) -> None:
         self.lines: list[str] = []
         self._partial = ""
+        self.started_at = started_at
+
+    def _format_line(self, line: str) -> str:
+        cleaned = line.rstrip()
+        if not cleaned:
+            return ""
+        if self.started_at is None:
+            return cleaned
+        if re.match(r"^\[\s*\d+\.\d+s\]\s", cleaned):
+            return cleaned
+        elapsed = time.time() - self.started_at
+        return f"[{elapsed:6.1f}s] {cleaned}"
 
     def write(self, value: str) -> int:
         if not value:
@@ -84,13 +96,15 @@ class StreamlitLogWriter:
         self._partial += value
         while "\n" in self._partial:
             line, self._partial = self._partial.split("\n", 1)
-            if line.strip():
-                self.lines.append(line)
+            formatted = self._format_line(line)
+            if formatted:
+                self.lines.append(formatted)
         return len(value)
 
     def flush(self) -> None:
-        if self._partial.strip():
-            self.lines.append(self._partial)
+        formatted = self._format_line(self._partial)
+        if formatted:
+            self.lines.append(formatted)
             self._partial = ""
 
     def get_value(self) -> str:
@@ -100,23 +114,27 @@ class StreamlitLogWriter:
 
 def _log_with_timer(log_placeholder, log_writer: StreamlitLogWriter, started_at: float, message: str) -> None:
     """Append a timed message to stdout-backed logs and refresh the Streamlit code block."""
-    elapsed = time.time() - started_at
-    print(f"[{elapsed:6.1f}s] {message}")
+    print(message)
     log_placeholder.code(log_writer.get_value(), language="text")
 
 
 def run_pipeline(article_text: str, log_placeholder):
     original_stdout = sys.stdout
     original_stderr = sys.stderr
-    log_writer = StreamlitLogWriter()
     started_at = time.time()
+    log_writer = StreamlitLogWriter(started_at=started_at)
     log_placeholder.code("[   0.0s] Starting retrieval for the input article...", language="text")
     try:
         sys.stdout = log_writer
         sys.stderr = log_writer
         _log_with_timer(log_placeholder, log_writer, started_at, "Starting retrieval for the input article...")
-        results = search(article_text, INDEX_BASE_DIR, top_k=6)
-        _log_with_timer(log_placeholder, log_writer, started_at, "Running claim verification, contradiction detection, and scoring...")
+        results = search(article_text, INDEX_BASE_DIR, top_k=6, stage_label="Main Article Retrieval")
+        _log_with_timer(
+            log_placeholder,
+            log_writer,
+            started_at,
+            "Running claim verification, contradiction detection, and scoring... this process may take up to 1 to 2 minutes.",
+        )
         analyze_bias_kwargs = {
             "retrieval_base_dir": INDEX_BASE_DIR,
         }
@@ -134,7 +152,12 @@ def run_pipeline(article_text: str, log_placeholder):
                 raise
             _log_with_timer(log_placeholder, log_writer, started_at, "Loaded analyze_bias does not support optimized kwargs; retrying with compatibility mode.")
             output = analyze_bias(article_text, retrieval_base_dir=INDEX_BASE_DIR)
-        _log_with_timer(log_placeholder, log_writer, started_at, "Summarizing reranked evidence for downstream scoring...")
+        _log_with_timer(
+            log_placeholder,
+            log_writer,
+            started_at,
+            "Summarizing reranked evidence for downstream scoring... this process may take up to 1 to 2 minutes.",
+        )
         summary_context = output.get("retrieved_summary_text", "")
         if not summary_context and results:
             summary_context = summarize_retrieved_chunks(results[:6], max_articles=3)
@@ -145,7 +168,12 @@ def run_pipeline(article_text: str, log_placeholder):
         evidence_text = "\n\n".join(evidence_lines)
         if summary_context:
             evidence_text = f"{summary_context}\n\nStructured Sources:\n{evidence_text}".strip()
-        _log_with_timer(log_placeholder, log_writer, started_at, "Running calibrated score model...")
+        _log_with_timer(
+            log_placeholder,
+            log_writer,
+            started_at,
+            "Running calibrated score model... this process may take up to 1 to 2 minutes.",
+        )
         calibrated_scores = score_article(article_text, evidence=evidence_text)
         _log_with_timer(log_placeholder, log_writer, started_at, "Pipeline completed.")
     finally:
@@ -313,11 +341,16 @@ def render_source_table(results: list[dict[str, Any]]) -> None:
     if not results:
         st.warning("No retrieval results were found for this article.")
         return
+    seen_keys: set[tuple[str, str]] = set()
     for result in results:
         source_name = result.get("website_name", "Unknown")
         title = result.get("title", "Untitled")
         url = result.get("url", "")
         score = float(result.get("score", 0.0))
+        dedupe_key = (str(url).strip(), str(title).strip().lower())
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
         if url:
             st.markdown(f"**[{title}]({url})**")
         else:

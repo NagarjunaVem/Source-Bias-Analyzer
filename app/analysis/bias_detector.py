@@ -46,14 +46,14 @@ def _validate_input(article_text: str) -> str:
 
 
 @lru_cache(maxsize=128)
-def _cached_search(query_text: str, base_dir: str, top_k: int) -> tuple[dict[str, Any], ...]:
-    results = search(query_text, base_dir=base_dir, top_k=top_k)
+def _cached_search(query_text: str, base_dir: str, top_k: int, stage_label: str) -> tuple[dict[str, Any], ...]:
+    results = search(query_text, base_dir=base_dir, top_k=top_k, stage_label=stage_label)
     return tuple(dict(item) for item in results)
 
 
-def _retrieve_evidence(query_text: str, base_dir: str, top_k: int) -> list[dict[str, Any]]:
+def _retrieve_evidence(query_text: str, base_dir: str, top_k: int, stage_label: str) -> list[dict[str, Any]]:
     try:
-        raw_results = [dict(item) for item in _cached_search(query_text, base_dir, top_k)]
+        raw_results = [dict(item) for item in _cached_search(query_text, base_dir, top_k, stage_label)]
         query_topics = _topic_tokens(query_text)
         if not query_topics:
             return raw_results
@@ -221,13 +221,23 @@ def analyze_bias(
 ) -> dict[str, Any]:
     """Run the production-style evidence-based bias analysis pipeline."""
     article = _validate_input(article_text)
-    article_evidence = [dict(item) for item in initial_evidence] if initial_evidence is not None else _retrieve_evidence(article, retrieval_base_dir, top_k)
+    article_evidence = (
+        [dict(item) for item in initial_evidence]
+        if initial_evidence is not None
+        else _retrieve_evidence(article, retrieval_base_dir, top_k, "Main Article Retrieval")
+    )
     normalized_article_evidence = [normalize_evidence_item(item) for item in article_evidence]
 
     claims = extract_claims(article, max_claims=max_claims)
     claim_analyses: list[dict[str, Any]] = []
-    for claim in claims:
-        claim_specific_evidence = _retrieve_evidence(claim, retrieval_base_dir, top_k=claim_retrieval_top_k)
+    total_claims = len(claims)
+    for index, claim in enumerate(claims, start=1):
+        claim_specific_evidence = _retrieve_evidence(
+            claim,
+            retrieval_base_dir,
+            top_k=claim_retrieval_top_k,
+            stage_label=f"Claim Retrieval {index}/{total_claims}",
+        )
         evidence_pool = _merge_unique_evidence(normalized_article_evidence, claim_specific_evidence)
         claim_analyses.append(detect_claim_stance(claim, evidence_pool[:6]))
 

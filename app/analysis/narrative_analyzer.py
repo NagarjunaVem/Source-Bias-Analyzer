@@ -11,7 +11,7 @@ from app.analysis.json_utils import ensure_dict, ensure_list, generate_validated
 from app.analysis.lexicon import BIAS_LEXICON
 
 NARRATIVE_MODEL_NAME = "qwen2.5:7b"
-NARRATIVE_TIMEOUT_SECONDS = 28
+NARRATIVE_TIMEOUT_SECONDS = 90
 NARRATIVE_MAX_RETRIES = 1
 
 def _tokenize(text: str) -> list[str]:

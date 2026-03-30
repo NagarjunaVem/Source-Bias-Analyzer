@@ -117,11 +117,15 @@ def classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
 
     support_signal = (0.45 * lexical_similarity) + (0.40 * semantic_similarity) + (0.15 * named_overlap)
     if (
-        support_signal >= 0.38
+        support_signal >= 0.34
         or (
-            semantic_similarity >= 0.34
-            and lexical_similarity >= 0.18
+            semantic_similarity >= 0.30
+            and lexical_similarity >= 0.16
             and named_overlap >= 0.08
+        )
+        or (
+            semantic_similarity >= 0.36
+            and lexical_similarity >= 0.14
         )
     ):
         confidence = min(1.0, 0.45 + support_signal)
@@ -184,10 +188,10 @@ def detect_claim_stance(claim: str, evidence_items: list[dict[str, Any]]) -> dic
         chosen_bucket = contradict_bucket
     elif (
         support_bucket
-        and support_avg >= 0.56
+        and support_avg >= 0.52
         and (
             not contradict_bucket
-            or support_avg >= contradict_avg + 0.05
+            or support_avg >= contradict_avg + 0.03
             or len(support_bucket) >= len(contradict_bucket)
             or len(support_bucket) >= 2
         )
