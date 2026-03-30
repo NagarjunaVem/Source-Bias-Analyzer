@@ -113,6 +113,10 @@ def _detect_missing_viewpoints(claim_analyses: list[dict[str, Any]]) -> dict[str
     support_claims = [item["claim"] for item in claim_analyses if item.get("support_count", 0) > 0]
     contradict_claims = [item["claim"] for item in claim_analyses if item.get("contradict_count", 0) > 0]
     neutral_claims = [item["claim"] for item in claim_analyses if item.get("support_count", 0) == 0 and item.get("contradict_count", 0) == 0]
+    average_evidence = (
+        sum(len(item.get("all_evidence", [])) for item in claim_analyses) / max(len(claim_analyses), 1)
+        if claim_analyses else 0.0
+    )
 
     cluster_sizes = {
         "support": len(support_claims),
@@ -124,9 +128,9 @@ def _detect_missing_viewpoints(claim_analyses: list[dict[str, Any]]) -> dict[str
     smallest_cluster = min(populated_clusters) if populated_clusters else 0
 
     missing_groups: list[str] = []
-    if cluster_sizes["support"] == 0:
+    if cluster_sizes["support"] == 0 and average_evidence < 4.5:
         missing_groups.append("supporting evidence")
-    if cluster_sizes["contradict"] == 0:
+    if cluster_sizes["contradict"] == 0 and average_evidence < 4.5:
         missing_groups.append("challenging evidence")
     if cluster_sizes["neutral"] == 0:
         missing_groups.append("contextual or neutral evidence")

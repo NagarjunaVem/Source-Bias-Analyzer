@@ -117,15 +117,15 @@ def classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
 
     support_signal = (0.45 * lexical_similarity) + (0.40 * semantic_similarity) + (0.15 * named_overlap)
     if (
-        support_signal >= 0.34
+        support_signal >= 0.36
         or (
-            semantic_similarity >= 0.30
+            semantic_similarity >= 0.32
             and lexical_similarity >= 0.16
             and named_overlap >= 0.08
         )
         or (
-            semantic_similarity >= 0.36
-            and lexical_similarity >= 0.14
+            semantic_similarity >= 0.40
+            and lexical_similarity >= 0.15
         )
     ):
         confidence = min(1.0, 0.45 + support_signal)
@@ -168,6 +168,10 @@ def detect_claim_stance(claim: str, evidence_items: list[dict[str, Any]]) -> dic
     support_bucket = stance_buckets[STANCE_SUPPORT]
     contradict_bucket = stance_buckets[STANCE_CONTRADICT]
     neutral_bucket = stance_buckets[STANCE_NEUTRAL]
+    strong_support_bucket = [
+        item for item in support_bucket
+        if float(item.get("stance_confidence", 0.0)) >= 0.58 and float(item.get("score", 0.0)) >= 0.70
+    ]
 
     support_avg = (
         sum(item["stance_confidence"] for item in support_bucket) / len(support_bucket)
@@ -188,16 +192,19 @@ def detect_claim_stance(claim: str, evidence_items: list[dict[str, Any]]) -> dic
         chosen_bucket = contradict_bucket
     elif (
         support_bucket
-        and support_avg >= 0.52
+        and (
+            support_avg >= 0.54
+            or len(strong_support_bucket) >= 2
+        )
         and (
             not contradict_bucket
             or support_avg >= contradict_avg + 0.03
             or len(support_bucket) >= len(contradict_bucket)
-            or len(support_bucket) >= 2
+            or len(strong_support_bucket) >= 2
         )
     ):
         overall_stance = STANCE_SUPPORT
-        chosen_bucket = support_bucket
+        chosen_bucket = strong_support_bucket or support_bucket
     else:
         overall_stance = STANCE_NEUTRAL
         chosen_bucket = neutral_bucket or (support_bucket + contradict_bucket)
