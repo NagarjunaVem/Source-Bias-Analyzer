@@ -11,7 +11,32 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
 
-AVAILABLE_SOURCES = ["bbc", "reuters", "cnn", "aljazeera", "thehindu", "ndtv"]
+AVAILABLE_SOURCES = [
+    "aajtakin",
+    "aljazeeracom",
+    "apnewscom",
+    "arstechnicacom",
+    "artificialintelligencenewscom",
+    "bbccom",
+    "bbccouk",
+    "cnbccom",
+    "engadgetcom",
+    "hindustantimescom",
+    "indianexpresscom",
+    "indiatodayin",
+    "livemintcom",
+    "naturecom",
+    "nprorg",
+    "reuterscom",
+    "sciencedailycom",
+    "spacecom",
+    "techcrunchcom",
+    "theguardiancom",
+    "thehinducom",
+    "thevergecom",
+    "timesofindiaindiatimescom",
+    "wiredcom",
+]
 AVAILABLE_TOPICS = ["politics", "economy", "technology", "sports", "world", "general"]
 
 PLANNER_PROMPT = ChatPromptTemplate.from_template(
