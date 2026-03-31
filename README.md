@@ -23,39 +23,48 @@ The system runs fully offline using [Ollama](https://ollama.com/) for all AI inf
 
 ### End-to-End Analysis Flow
 
-```
-User Input (URL / PDF / text)
-  └─→ Text Extraction
-       └─→ Query Planning         (gemma2:9b)
-            └─→ Hybrid Retrieval  (FAISS + BM25)
-                 └─→ Credibility & Recency Weighting
-                      └─→ Cross-Encoder Reranking
-                           └─→ Claim Extraction
-                                └─→ Claim-Level Retrieval
-                                     └─→ Stance Detection
-                                          └─→ Contradiction Detection
-                                               └─→ Narrative Analysis  (qwen2.5:7b)
-                                                    └─→ Loaded Language Detection
-                                                         └─→ Scoring Engine  (phi3:mini)
-                                                              └─→ UI + PDF Report
+```mermaid
+flowchart TD
+    A["🖥️ User Input\n(URL / PDF / text)"]
+    B["📄 Text Extraction"]
+    C["🗺️ Query Planning\n(gemma2:9b)"]
+    D["🔍 Hybrid Retrieval\n(FAISS + BM25)"]
+    E["⚖️ Credibility &\nRecency Weighting"]
+    F["🔁 Cross-Encoder\nReranking"]
+    G["🧾 Claim Extraction"]
+    H["🔍 Claim-Level\nRetrieval"]
+    I["📐 Stance Detection"]
+    J["⚡ Contradiction\nDetection"]
+    K["🧠 Narrative Analysis\n(qwen2.5:7b)"]
+    L["🗣️ Loaded Language\nDetection"]
+    M["📊 Scoring Engine\n(phi3:mini)"]
+    N["📑 UI + PDF Report"]
+
+    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L --> M --> N
 ```
 
 ### Scraping & Indexing Pipeline (Producer-Consumer)
 
-```
-[Scraper Loop — Producer]
-  Runs 39 async scrapers (RSS + BFS web) for up to 5 hours
-  └─→ data/web/<source>.json
-  └─→ data/rss/<source>.json
-       └─→ Moves to: data/indexing_queue/cycle_N_TIMESTAMP/
-            └─→ Restarts immediately (zero blocking)
+```mermaid
+flowchart TD
+    subgraph PRODUCER["🕷️ Scraper Loop — Producer"]
+        P1["39 Async Scrapers\n(RSS + BFS Web)\nup to 5 hours"]
+        P2["data/web/<source>.json\ndata/rss/<source>.json"]
+        P3["data/indexing_queue/\ncycle_N_TIMESTAMP/"]
+        P4["🔄 Restart immediately\n(zero blocking)"]
+        P1 --> P2 --> P3 --> P4
+    end
 
-[Index Worker — Consumer]
-  Polls indexing_queue/ every 60 seconds
-  └─→ Step A: Consolidates JSONs → data/new_articles_detailed.jsonl
-  └─→ Step B: Triggers build_index_pipeline() → FAISS vector DB
-  └─→ Step C: Appends to universal DB (data/)
-  └─→ Step D: Deletes cycle folder
+    subgraph CONSUMER["⚙️ Index Worker — Consumer"]
+        C0["Poll indexing_queue/\nevery 60 seconds"]
+        C1["Step A: Consolidate JSONs\n→ new_articles_detailed.jsonl"]
+        C2["Step B: build_index_pipeline()\n→ FAISS vector DB"]
+        C3["Step C: Append to\nuniversal DB (data/)"]
+        C4["Step D: Delete\ncycle folder"]
+        C0 --> C1 --> C2 --> C3 --> C4
+    end
+
+    P3 -->|"cycle folder dropped"| C0
 ```
 
 ---
