@@ -37,49 +37,49 @@ def deduplicate_chunks(results: list[dict]) -> list[dict]:
         if left_index not in keep_indices:
             continue
 
-        for right_index in range(left_index + 1, len(results)):
-            if right_index not in keep_indices:
-                continue
+    for right_index in range(left_index + 1, len(results)):
+        if right_index not in keep_indices:
+            continue
 
-            words_a = normalized_chunks[left_index]
-            words_b = normalized_chunks[right_index]
-            union = words_a | words_b
-            overlap = 0.0 if not union else len(words_a & words_b) / len(union)
+        words_a = normalized_chunks[left_index]
+        words_b = normalized_chunks[right_index]
+        union = words_a | words_b
+        overlap = 0.0 if not union else len(words_a & words_b) / len(union)
 
-            if overlap < 0.90:
-                continue
+        if overlap < 0.90:
+            continue
 
-            left_result = results[left_index]
-            right_result = results[right_index]
+        left_result = results[left_index]
+        right_result = results[right_index]
 
-            # First compare FAISS similarity scores.
-            left_score = float(left_result.get("score", 0.0))
-            right_score = float(right_result.get("score", 0.0))
-            if left_score > right_score:
-                keep_indices.discard(right_index)
-                continue
-            if right_score > left_score:
-                keep_indices.discard(left_index)
-                break
+        # First compare FAISS similarity scores.
+        left_score = float(left_result.get("score", 0.0))
+        right_score = float(right_result.get("score", 0.0))
+        if left_score > right_score:
+            keep_indices.discard(right_index)
+            continue
+        if right_score > left_score:
+            keep_indices.discard(left_index)
+            break
 
-            # If scores tie, prefer the chunk with longer text.
-            left_text = str(left_result.get("text", ""))
-            right_text = str(right_result.get("text", ""))
-            if len(left_text) > len(right_text):
-                keep_indices.discard(right_index)
-                continue
-            if len(right_text) > len(left_text):
-                keep_indices.discard(left_index)
-                break
+        # If scores tie, prefer the chunk with longer text.
+        left_text = str(left_result.get("text", ""))
+        right_text = str(right_result.get("text", ""))
+        if len(left_text) > len(right_text):
+            keep_indices.discard(right_index)
+            continue
+        if len(right_text) > len(left_text):
+            keep_indices.discard(left_index)
+            break
 
-            # If both lengths tie, prefer the chunk with more named entities and numbers.
-            left_entities = len(re.findall(r"\b[A-Z][a-zA-Z]+\b|\b\d+(?:\.\d+)?\b", left_text))
-            right_entities = len(re.findall(r"\b[A-Z][a-zA-Z]+\b|\b\d+(?:\.\d+)?\b", right_text))
-            if left_entities >= right_entities:
-                keep_indices.discard(right_index)
-            else:
-                keep_indices.discard(left_index)
-                break
+        # If both lengths tie, prefer the chunk with more named entities and numbers.
+        left_entities = len(re.findall(r"\b[A-Z][a-zA-Z]+\b|\b\d+(?:\.\d+)?\b", left_text))
+        right_entities = len(re.findall(r"\b[A-Z][a-zA-Z]+\b|\b\d+(?:\.\d+)?\b", right_text))
+        if left_entities >= right_entities:
+            keep_indices.discard(right_index)
+        else:
+            keep_indices.discard(left_index)
+            break
 
     # Preserve the original retrieval order for all unique chunks that survived.
     unique_chunks = [result for index, result in enumerate(results) if index in keep_indices]
@@ -116,12 +116,15 @@ def summarize_chunk(text: str) -> str:
 
     # Call the local Ollama API using only requests, and fall back silently to raw text if it fails.
     try:
+        # Load-on-demand log for the user
+        print("Loading gemma2:9b into RAM for article summarization...")
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
                 "model": "gemma2:9b",
                 "prompt": prompt,
                 "stream": False,
+                "keep_alive": "1m", 
             },
             timeout=SUMMARY_TIMEOUT_SECONDS,
         )
@@ -162,8 +165,14 @@ def summarize_retrieved_chunks(results: list[dict], max_articles: int = MAX_SUMM
         grouped_articles[article_key]["chunks"].append(result)
 
     # Summarize each reconstructed article instead of each individual chunk.
+    ranked_article_keys = sorted(
+        article_order,
+        key=lambda key: grouped_articles[key]["score"],
+        reverse=True,
+    )
+
     summaries: list[str] = []
-    for article_key in article_order[:max_articles]:
+    for article_key in ranked_article_keys[:max_articles]:
         article = grouped_articles[article_key]
         ordered_chunks = sorted(
             article["chunks"],

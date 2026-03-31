@@ -43,6 +43,8 @@ def generate_validated_json(
     last_raw_output = ""
     retry_prompt = prompt.strip()
 
+    # Load-on-demand log for the user
+    print(f"Loading {model} into RAM for calibrated scoring...")
     for attempt in range(1, max_retries + 1):
         try:
             response = requests.post(
@@ -56,6 +58,7 @@ def generate_validated_json(
                         "temperature": 0.1,
                         "num_predict": 700,
                     },
+                    "keep_alive": "1m", 
                 },
                 timeout=timeout,
             )
