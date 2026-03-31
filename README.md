@@ -1,26 +1,26 @@
-# 🧠 Evidence-Based News Bias Analyzer
+# Evidence-Based News Bias Analyzer
 
 An end-to-end **local-first AI system** for analyzing news articles using multi-source retrieval, structured reasoning, and explainable scoring.
 
 ---
 
-# 🚀 Overview
+# Overview
 
 This project combines:
 
-- 🔍 Hybrid retrieval (FAISS + BM25 + reranking)
-- 🧾 Claim-level verification
-- ⚖️ Stance + contradiction detection
-- 🧠 Narrative & framing analysis
-- 📊 Calibrated scoring system
-- 🌐 Continuous scraping + indexing pipeline
-- 🖥️ Streamlit UI + PDF reports
+- Hybrid retrieval (FAISS + BM25 + reranking)
+- Claim-level verification
+- Stance + contradiction detection
+- Narrative & framing analysis
+- Calibrated scoring system
+- Continuous scraping + indexing pipeline
+- Streamlit UI + PDF reports
 
 ---
 
-# 🏗️ System Architecture
+# System Architecture
 
-## 🔁 End-to-End Analysis Flow
+## End-to-End Analysis Flow
 
 ```mermaid
 graph TD
@@ -43,7 +43,7 @@ graph TD
 
 ---
 
-# 📂 Project Structure
+# Project Structure
 
 ```text
 .
@@ -65,9 +65,9 @@ graph TD
 
 ---
 
-# 🧩 Core Modules
+# Core Modules
 
-## 🧠 Analysis (`app/analysis/`)
+## Analysis (app/analysis/)
 
 Core reasoning layer:
 
@@ -87,7 +87,7 @@ Article → Claims → Evidence → Stance → Contradictions → Narrative → 
 
 ---
 
-## 🔍 Retrieval (`app/retrieval/`)
+## Retrieval (app/retrieval/)
 
 Hybrid retrieval system:
 
@@ -114,7 +114,7 @@ Query → FAISS + BM25 → Merge → Filter → Rerank → Results
 
 ---
 
-## 📦 Embeddings (`app/embeddings/`)
+## Embeddings (app/embeddings/)
 
 Vector pipeline:
 
@@ -131,7 +131,7 @@ Features:
 
 ---
 
-## 🌐 Input Pipeline (`app/input/`)
+## Input Pipeline (app/input/)
 
 Scraping system:
 
@@ -149,7 +149,7 @@ Scraping system:
 
 ---
 
-## 📊 Evaluation (`app/evaluation/`)
+## Evaluation (app/evaluation/)
 
 Supports:
 
@@ -160,7 +160,7 @@ Supports:
 
 ---
 
-# 🔬 Detailed Analysis Pipeline
+# Detailed Analysis Pipeline
 
 ```text
 Input Article
@@ -181,7 +181,7 @@ Input Article
 
 ---
 
-# 📊 Scoring System
+# Scoring System
 
 ## Top-Level Metrics
 
@@ -209,7 +209,7 @@ Component signals:
 
 ---
 
-# 🧾 Loaded Language Analysis
+# Loaded Language Analysis
 
 Categories:
 
@@ -228,77 +228,45 @@ UI includes:
 
 ---
 
-# 🤖 Models Used (Ollama)
+# Models Required (Ollama)
 
-| Task               | Model            |
-| ------------------ | ---------------- |
-| Embeddings         | nomic-embed-text |
-| Narrative analysis | qwen2.5:7b       |
-| Scoring            | phi3:mini        |
-| Summarization      | gemma2:9b        |
+To run the full pipeline, the following models must be pulled in Ollama. The system uses specific models optimized for each reasoning task.
+
+| Task | Model | Purpose | Pull Command |
+| :--- | :--- | :--- | :--- |
+| **Embeddings** | `nomic-embed-text` | Vectorizing queries and articles for FAISS retrieval. | `ollama pull nomic-embed-text` |
+| **Stance Detection** | `phi3:mini` | Classifying evidence stance (Support/Refute) for claims. | `ollama pull phi3:mini` |
+| **Calibrated Scoring** | `phi3:mini` | Calculating final confidence and credibility scores. | `ollama pull phi3:mini` |
+| **Summarization** | `gemma2:9b` | Grounded summarization of retrieved evidence chunks. | `ollama pull gemma2:9b` |
+| **Narrative Analysis** | `qwen2.5:7b` | Comparing framing and Selective emphasis across sources. | `ollama pull qwen2.5:7b` |
+---
+
+# RAM Management & Resource Optimization
+
+To ensure stability on memory-constrained systems, the application uses **On-Demand Model Loading**:
+
+- **Lazy Startup**: No models or indexes are loaded until the "Run Analysis" button is pressed.
+- **Unload-on-Idle**: All Ollama models are configured with `keep_alive: "1m"`. They load only when a specific analysis stage starts and are released from RAM 1 minute after the last request in that stage.
+- **Incremental Retrieval**: FAISS indexes are loaded site-by-site during the search phase rather than all at once.
 
 ---
 
-# 🧪 Test Article Generation
-
-Test articles used for evaluation are **generated using a local LLM**.
-
-### ⚙️ Model Used
-
-- llama2-uncensored:7b
-
-### 🎯 Purpose
-
-These generated articles are used strictly for **evaluation and testing**, not for training or production inference.
-
-They help:
-
-- benchmark bias detection accuracy
-- test stance and contradiction detection
-- validate scoring calibration
-- simulate controlled edge cases
-
-### 🧾 Types of Generated Articles
-
-The evaluation setup includes:
-
-- balanced articles
-- biased / one-sided articles
-- emotionally loaded articles
-- misleading or framed narratives
-- factually incorrect articles
-- contradictory articles
-- weak evidence articles
-
-### 🔍 Why This Matters
-
-Using generated data allows:
-
-- controlled and reproducible testing
-- targeted evaluation of specific failure cases
-- consistent benchmarking without relying on noisy real-world datasets
-
-### 🔗 Integration
-
-Generated articles are passed into:
-
-```text
-Evaluation → Analysis Pipeline → Metrics
-```
-
-This ensures the system can be tested systematically across different bias and reasoning scenarios.
-
----
-
----
-
-# 🖥️ Running the Project
+# Running the Project
 
 ## Setup
 
-```bash
-pip install -r requirements.txt
-```
+1. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Pull All Required Models**:
+   ```bash
+   ollama pull nomic-embed-text
+   ollama pull phi3:mini
+   ollama pull gemma2:9b
+   ollama pull qwen2.5:7b
+   ```
 
 ## Run UI
 
@@ -321,7 +289,7 @@ Options:
 
 ---
 
-# 🔁 Scraping & Indexing
+# Scraping & Indexing
 
 ## Scraper
 
@@ -344,7 +312,7 @@ Located at:
 app/embeddings/build_index.py
 ```
 
-Responsibilities:
+Responsibilties:
 
 - load JSON/JSONL data
 - filter valid articles
@@ -354,7 +322,7 @@ Responsibilities:
 
 ---
 
-# 📄 PDF Reporting
+# PDF Reporting
 
 Generated via Streamlit + PyMuPDF.
 
@@ -371,7 +339,7 @@ Includes:
 
 ---
 
-# ⚠️ Limitations
+# Limitations
 
 - heuristic claim extraction
 - model latency varies by hardware
@@ -380,81 +348,72 @@ Includes:
 
 ---
 
-# 💡 Strengths
+# Strengths
 
-### 🧵 Multi-Scraper Architecture
+### Multi-Scraper Architecture
 
 - concurrent async scraping across multiple sources
 - supports both RSS and full web crawling
 - BFS-style discovery for deeper coverage
 - per-source configuration and scaling
 
-### 🧠 Multi-Index FAISS Architecture
+### Multi-Index FAISS Architecture
 
 - separate FAISS index per publisher/domain
 - avoids single-index bottlenecks
 - improves retrieval diversity
 - enables source-level weighting and filtering
 
-### 🔀 Hybrid Retrieval System
+### Hybrid Retrieval System
 
 - FAISS (semantic) + BM25 (lexical)
 - fusion of results across multiple sources
 - fallback-safe design (works even if embeddings fail)
 
-### ⚖️ Advanced Ranking & Weighting
+### Advanced Ranking & Weighting
 
 - cross-encoder reranking
 - credibility-based weighting per source
 - recency-based scoring adjustments
 - adaptive thresholds per site
 
-### 🔄 Continuous Data Pipeline
+### Continuous Data Pipeline
 
 - producer-consumer architecture
 - scraper and indexing fully decoupled
 - automatic FAISS updates
 - zero blocking between ingestion and ML pipeline
 
-### 🛡️ Fault Tolerance
+### Fault Tolerance
 
 - safe fallbacks for embedding failures
 - reranker failure recovery
 - corrupted index handling
 - retry-safe indexing queue
 
-### 🧪 Evaluation-Ready System
+### Evaluation-Ready System
 
 - synthetic test article generation
 - structured dataset evaluation
 - reproducible benchmarking
 
-### 🧩 Modular Design
+### Modular Design
 
 - clean separation of concerns
-
 - independently testable modules
-
 - scalable architecture
-
 - local-first (privacy friendly)
-
 - explainable outputs
-
 - modular architecture
-
 - fault-tolerant pipeline
-
 - production-style ingestion + indexing
 
 ---
 
-# 🛣️ Future Work
+# Future Work
 
 - improved claim extraction
 - stronger contradiction reasoning
 - distributed indexing
 - real-time ingestion
 - advanced evaluation benchmarks
-
----

@@ -129,12 +129,14 @@ def run_pipeline(article_text: str, log_placeholder):
         sys.stdout = log_writer
         sys.stderr = log_writer
         _log_with_timer(log_placeholder, log_writer, started_at, "Starting retrieval for the input article...")
+        # Note: faiss_retriever.py will print "Loading nomic-embed-text into RAM..." during the first embed_query call.
         results = search(article_text, INDEX_BASE_DIR, top_k=6, stage_label="Main Article Retrieval")
         _log_with_timer(
             log_placeholder,
             log_writer,
             started_at,
-            "Running claim verification, contradiction detection, and scoring... this process may take up to 1 to 2 minutes.",
+            "Running LLM-based claim verification and stance detection... "
+            "this process may take up to 2 to 4 minutes depending on the number of claims and model speed.",
         )
         analyze_bias_kwargs = {
             "retrieval_base_dir": INDEX_BASE_DIR,
@@ -186,13 +188,8 @@ def run_pipeline(article_text: str, log_placeholder):
 
 
 def warm_retrieval_stack() -> tuple[bool, str]:
-    """Warm indexes and the embedding model once per Streamlit session."""
-    try:
-        load_all_indexes(INDEX_BASE_DIR)
-        embed_query("energy market warmup")
-        return True, "Retrieval stack warmed successfully."
-    except Exception as error:
-        return False, f"Retrieval warmup did not fully complete: {error}"
+    """Retrieval indexes and models will be loaded on-demand when analysis starts."""
+    return True, "On-demand model loading enabled."
 
 
 # ---------------------------------------------------------------------------

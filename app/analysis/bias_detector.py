@@ -235,7 +235,9 @@ def analyze_bias(
     claims = extract_claims(article, max_claims=max_claims)
     claim_analyses: list[dict[str, Any]] = []
     total_claims = len(claims)
+    print(f"Loading phi3:mini into RAM for stance detection on {total_claims} claim(s)...")
     for index, claim in enumerate(claims, start=1):
+        print(f"Stance detection: analysing claim {index}/{total_claims}...")
         claim_specific_evidence = _retrieve_evidence(
             claim,
             retrieval_base_dir,
@@ -244,6 +246,8 @@ def analyze_bias(
         )
         evidence_pool = _merge_unique_evidence(normalized_article_evidence, claim_specific_evidence)
         claim_analyses.append(detect_claim_stance(claim, evidence_pool[:6]))
+        print(f"Stance detection: claim {index}/{total_claims} complete.")
+    print("Stance detection finished for all claims.")
 
     contradictions = detect_contradictions(claim_analyses)
     narrative_analysis = analyze_narratives(article, normalized_article_evidence)

@@ -1,15 +1,60 @@
-"""Claim-to-evidence stance detection utilities."""
+"""Claim-to-evidence stance detection utilities.
+
+Primary method: LLM-based (phi3:mini via Ollama) with a generous timeout.
+Fallback method: Rule-based lexical heuristics (original implementation).
+"""
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 import re
 from collections import Counter
 from typing import Any
 
+import requests
+
+LOGGER = logging.getLogger(__name__)
+
 STANCE_SUPPORT = "SUPPORT"
 STANCE_CONTRADICT = "CONTRADICT"
 STANCE_NEUTRAL = "NEUTRAL"
+
+# ---------------------------------------------------------------------------
+# LLM configuration
+# ---------------------------------------------------------------------------
+OLLAMA_URL = "http://localhost:11434/api/generate"
+STANCE_MODEL = "phi3:mini"        # loaded model
+STANCE_LLM_TIMEOUT = 180          # seconds — generous to avoid false fallbacks
+STANCE_LLM_NUM_PREDICT = 120      # only need a small JSON object
+
+STANCE_PROMPT_TEMPLATE = """You are a precise stance-detection engine.
+
+Given a CLAIM and an EVIDENCE chunk, classify the stance of the evidence toward the claim.
+
+Rules:
+- SUPPORT   → the evidence agrees with, confirms, or corroborates the claim
+- CONTRADICT → the evidence disagrees with, refutes, or is in conflict with the claim
+- NEUTRAL   → the evidence is topically related but neither supports nor contradicts
+
+Return ONLY valid JSON with this exact schema (no prose, no explanation outside the JSON):
+{{
+  "stance": "SUPPORT" | "CONTRADICT" | "NEUTRAL",
+  "confidence": 0.0,
+  "reason": ""
+}}
+
+CLAIM:
+{claim}
+
+EVIDENCE:
+{evidence}
+"""
+
+# ---------------------------------------------------------------------------
+# Heuristic helpers (original implementation — used as fallback)
+# ---------------------------------------------------------------------------
 NEGATION_WORDS = {"no", "not", "never", "none", "without", "denied", "denies", "deny", "refuted", "rejects"}
 TOPIC_STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "if", "then", "than", "that", "this", "these", "those", "is", "are",
@@ -69,20 +114,8 @@ def _is_relevant_evidence(claim: str, evidence_text: str) -> bool:
     return topic_overlap >= 2 or (topic_overlap >= 1 and named_overlap >= 1)
 
 
-def normalize_evidence_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Normalize retrieval output into the evidence shape used by analysis."""
-    return {
-        "source": str(item.get("website_name") or item.get("source") or item.get("site_name") or "Unknown"),
-        "text": str(item.get("text", "")).strip(),
-        "score": float(item.get("score", 0.0)),
-        "url": str(item.get("url", "")),
-        "title": str(item.get("title", "")),
-        "published_at": str(item.get("published_at") or item.get("scraped_date") or item.get("published") or ""),
-    }
-
-
-def classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
-    """Classify a single evidence chunk as supporting, contradicting, or neutral."""
+def _heuristic_classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
+    """Original rule-based stance classification (used as fallback)."""
     if not _is_relevant_evidence(claim, evidence_text):
         return STANCE_NEUTRAL, 0.05, "low_topic_overlap"
 
@@ -134,6 +167,91 @@ def classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
     neutral_signal = max(semantic_similarity, lexical_similarity)
     return STANCE_NEUTRAL, min(1.0, 0.20 + neutral_signal), "weak_alignment"
 
+
+# ---------------------------------------------------------------------------
+# LLM-based stance classification
+# ---------------------------------------------------------------------------
+
+def _llm_classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str] | None:
+    """Call Ollama LLM to classify stance. Returns None on any failure so the
+    caller can fall through to the heuristic method."""
+    # Trim inputs to keep the prompt concise and latency low
+    claim_snippet = claim.strip()[:600]
+    evidence_snippet = evidence_text.strip()[:800]
+
+    prompt = STANCE_PROMPT_TEMPLATE.format(claim=claim_snippet, evidence=evidence_snippet)
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": STANCE_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+                "options": {
+                    "temperature": 0.05,
+                    "num_predict": STANCE_LLM_NUM_PREDICT,
+                },
+                "keep_alive": "1m", # Keep in RAM for 1 minute to bridge burst calls
+            },
+            timeout=STANCE_LLM_TIMEOUT,
+        )
+        response.raise_for_status()
+        raw = str(response.json().get("response", "")).strip()
+        parsed = json.loads(raw)
+
+        stance_raw = str(parsed.get("stance", "")).strip().upper()
+        if stance_raw not in {STANCE_SUPPORT, STANCE_CONTRADICT, STANCE_NEUTRAL}:
+            LOGGER.debug("LLM returned unexpected stance value '%s'; falling back.", stance_raw)
+            return None
+
+        confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0.5))))
+        reason = str(parsed.get("reason", "llm_classified")).strip() or "llm_classified"
+        return stance_raw, confidence, reason
+
+    except Exception as error:
+        LOGGER.debug("LLM stance classification failed: %s — using heuristic fallback.", error)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Public classify_stance — LLM first, heuristic fallback
+# ---------------------------------------------------------------------------
+
+def classify_stance(claim: str, evidence_text: str) -> tuple[str, float, str]:
+    """Classify a single evidence chunk as supporting, contradicting, or neutral.
+
+    Tries the LLM first; falls back to heuristic if LLM is unavailable or
+    returns an invalid response.
+    """
+    llm_result = _llm_classify_stance(claim, evidence_text)
+    if llm_result is not None:
+        return llm_result
+
+    # Heuristic fallback
+    return _heuristic_classify_stance(claim, evidence_text)
+
+
+# ---------------------------------------------------------------------------
+# Evidence normalisation
+# ---------------------------------------------------------------------------
+
+def normalize_evidence_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize retrieval output into the evidence shape used by analysis."""
+    return {
+        "source": str(item.get("website_name") or item.get("source") or item.get("site_name") or "Unknown"),
+        "text": str(item.get("text", "")).strip(),
+        "score": float(item.get("score", 0.0)),
+        "url": str(item.get("url", "")),
+        "title": str(item.get("title", "")),
+        "published_at": str(item.get("published_at") or item.get("scraped_date") or item.get("published") or ""),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Claim-level aggregation
+# ---------------------------------------------------------------------------
 
 def detect_claim_stance(claim: str, evidence_items: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate chunk-level stance into a claim-level analysis result."""

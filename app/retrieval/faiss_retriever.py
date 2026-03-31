@@ -121,6 +121,8 @@ def embed_query(query_text: str) -> np.ndarray:
             working_candidate = candidate
             while True:
                 try:
+                    # Load-on-demand log for the user
+                    print("Loading nomic-embed-text into RAM for query embedding...")
                     query_vector = embedder.embed_query(working_candidate)
                     query_embedding = np.array([query_vector]).astype("float32")
                     faiss.normalize_L2(query_embedding)
