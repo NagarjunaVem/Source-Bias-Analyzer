@@ -165,8 +165,14 @@ def summarize_retrieved_chunks(results: list[dict], max_articles: int = MAX_SUMM
         grouped_articles[article_key]["chunks"].append(result)
 
     # Summarize each reconstructed article instead of each individual chunk.
+    ranked_article_keys = sorted(
+        article_order,
+        key=lambda key: grouped_articles[key]["score"],
+        reverse=True,
+    )
+
     summaries: list[str] = []
-    for article_key in article_order[:max_articles]:
+    for article_key in ranked_article_keys[:max_articles]:
         article = grouped_articles[article_key]
         ordered_chunks = sorted(
             article["chunks"],
