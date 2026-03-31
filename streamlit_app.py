@@ -1390,7 +1390,7 @@ if st.session_state.analysis_output and st.session_state.last_analyzed_text == a
         # Show indicator when custom weights differ from defaults
         _using_custom = (selected_preset_label != "Default (Balanced)")
         if _using_custom:
-            st.info(f"⚖️ Scores recalculated using **{selected_preset}** weight preset. Adjust sliders in the sidebar or run again to refresh.")
+            st.info(f"Scores recalculated using **{selected_preset_label}** weight preset. Adjust sliders in the sidebar or run again to refresh.")
 
         render_calibrated_score_section(effective_calibrated)
 
