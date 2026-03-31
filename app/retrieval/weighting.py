@@ -21,11 +21,11 @@ def apply_recency_weight(results: list[dict]) -> list[dict]:
             if days_old <= 30:
                 recency_boost = 1.0
             elif days_old <= 90:
-                recency_boost = 0.85
+                recency_boost = 0.95
             elif days_old <= 180:
-                recency_boost = 0.70
+                recency_boost = 0.90
             else:
-                recency_boost = 0.55
+                recency_boost = 0.85
             result["score"] = float(result["score"]) * recency_boost
             result["recency_boost"] = recency_boost
             result["days_old"] = days_old
