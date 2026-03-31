@@ -141,6 +141,7 @@ flowchart TD
 | Task               | Model            | Notes                                      |
 |--------------------|------------------|--------------------------------------------|
 | Embeddings         | nomic-embed-text | Used for both indexing and query embedding |
+| Stance Detection   | phi3:mini        | Classifying evidence stance for claims.    |
 | Narrative analysis | qwen2.5:7b       | Framing bias + selective emphasis scoring  |
 | Query planning     | gemma2:9b        | Retrieval filter generation                |
 | Summarization      | gemma2:9b        | Evidence chunk summarization               |
