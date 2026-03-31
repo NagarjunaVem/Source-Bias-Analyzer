@@ -4,6 +4,7 @@ import time
 import inspect
 import re
 import textwrap
+import copy
 from datetime import datetime
 from collections import Counter
 from typing import Any
@@ -194,6 +195,211 @@ def warm_retrieval_stack() -> tuple[bool, str]:
         return False, f"Retrieval warmup did not fully complete: {error}"
 
 
+# ---------------------------------------------------------------------------
+# DEFAULT WEIGHTS (mirrors scorer.py and scoring_v2.py)
+# ---------------------------------------------------------------------------
+DEFAULT_WEIGHTS_SCORER = {
+    "credibility": {
+        "factual_accuracy": 0.60,
+        "evidence_support": 0.25,
+        "source_reliability": 0.15,
+    },
+    "completeness": {
+        "viewpoint_coverage": 0.60,
+        "context_depth": 0.25,
+        "evidence_support": 0.15,
+    },
+    "bias": {
+        "narrative_bias": 0.70,
+        "loaded_language": 0.30,
+    },
+    "confidence": {
+        "evidence_support": 0.45,
+        "source_reliability": 0.20,
+        "viewpoint_coverage": 0.20,
+        "json_validity": 0.15,
+    },
+}
+
+DEFAULT_WEIGHTS_V2 = {
+    "factual_accuracy": 0.35,
+    "narrative_bias": 0.25,
+    "completeness": 0.20,
+    "confidence": 0.20,
+}
+
+DEFAULT_LANG_ADJUSTMENTS = {
+    "narrative_bias": 0.55,
+    "factual_accuracy": -0.18,
+    "completeness": -0.10,
+    "confidence": -0.08,
+}
+
+# ---------------------------------------------------------------------------
+# PRESET WEIGHT COMBINATIONS
+# ---------------------------------------------------------------------------
+WEIGHT_PRESETS: dict[str, dict[str, Any]] = {
+    "Balanced": {
+        "description": "Original default weights — balanced across all dimensions.",
+        "scorer": copy.deepcopy(DEFAULT_WEIGHTS_SCORER),
+        "v2": copy.deepcopy(DEFAULT_WEIGHTS_V2),
+        "lang": copy.deepcopy(DEFAULT_LANG_ADJUSTMENTS),
+    },
+    "Factual-First": {
+        "description": "Prioritise factual accuracy and evidence support above everything else.",
+        "scorer": {
+            "credibility": {"factual_accuracy": 0.75, "evidence_support": 0.20, "source_reliability": 0.05},
+            "completeness": {"viewpoint_coverage": 0.50, "context_depth": 0.30, "evidence_support": 0.20},
+            "bias": {"narrative_bias": 0.65, "loaded_language": 0.35},
+            "confidence": {"evidence_support": 0.55, "source_reliability": 0.20, "viewpoint_coverage": 0.15, "json_validity": 0.10},
+        },
+        "v2": {"factual_accuracy": 0.50, "narrative_bias": 0.20, "completeness": 0.15, "confidence": 0.15},
+        "lang": {"narrative_bias": 0.40, "factual_accuracy": -0.25, "completeness": -0.08, "confidence": -0.06},
+    },
+    "Bias-Focus": {
+        "description": "Emphasise narrative bias and loaded language detection.",
+        "scorer": {
+            "credibility": {"factual_accuracy": 0.50, "evidence_support": 0.30, "source_reliability": 0.20},
+            "completeness": {"viewpoint_coverage": 0.65, "context_depth": 0.20, "evidence_support": 0.15},
+            "bias": {"narrative_bias": 0.80, "loaded_language": 0.20},
+            "confidence": {"evidence_support": 0.40, "source_reliability": 0.20, "viewpoint_coverage": 0.25, "json_validity": 0.15},
+        },
+        "v2": {"factual_accuracy": 0.20, "narrative_bias": 0.45, "completeness": 0.20, "confidence": 0.15},
+        "lang": {"narrative_bias": 0.75, "factual_accuracy": -0.10, "completeness": -0.10, "confidence": -0.05},
+    },
+    "Completeness-Focus": {
+        "description": "Heavily weight viewpoint coverage and context depth.",
+        "scorer": {
+            "credibility": {"factual_accuracy": 0.55, "evidence_support": 0.30, "source_reliability": 0.15},
+            "completeness": {"viewpoint_coverage": 0.70, "context_depth": 0.20, "evidence_support": 0.10},
+            "bias": {"narrative_bias": 0.60, "loaded_language": 0.40},
+            "confidence": {"evidence_support": 0.40, "source_reliability": 0.15, "viewpoint_coverage": 0.30, "json_validity": 0.15},
+        },
+        "v2": {"factual_accuracy": 0.25, "narrative_bias": 0.20, "completeness": 0.40, "confidence": 0.15},
+        "lang": {"narrative_bias": 0.50, "factual_accuracy": -0.15, "completeness": -0.15, "confidence": -0.08},
+    },
+    "Quick-Check (Lenient)": {
+        "description": "Lenient check — useful for rapid triage of articles.",
+        "scorer": {
+            "credibility": {"factual_accuracy": 0.50, "evidence_support": 0.30, "source_reliability": 0.20},
+            "completeness": {"viewpoint_coverage": 0.50, "context_depth": 0.30, "evidence_support": 0.20},
+            "bias": {"narrative_bias": 0.60, "loaded_language": 0.40},
+            "confidence": {"evidence_support": 0.40, "source_reliability": 0.25, "viewpoint_coverage": 0.20, "json_validity": 0.15},
+        },
+        "v2": {"factual_accuracy": 0.30, "narrative_bias": 0.20, "completeness": 0.25, "confidence": 0.25},
+        "lang": {"narrative_bias": 0.30, "factual_accuracy": -0.10, "completeness": -0.05, "confidence": -0.05},
+    },
+    "Strict Evidence": {
+        "description": "Strict — demands strong evidence support and source reliability.",
+        "scorer": {
+            "credibility": {"factual_accuracy": 0.50, "evidence_support": 0.40, "source_reliability": 0.10},
+            "completeness": {"viewpoint_coverage": 0.50, "context_depth": 0.20, "evidence_support": 0.30},
+            "bias": {"narrative_bias": 0.70, "loaded_language": 0.30},
+            "confidence": {"evidence_support": 0.60, "source_reliability": 0.15, "viewpoint_coverage": 0.15, "json_validity": 0.10},
+        },
+        "v2": {"factual_accuracy": 0.30, "narrative_bias": 0.25, "completeness": 0.25, "confidence": 0.20},
+        "lang": {"narrative_bias": 0.60, "factual_accuracy": -0.20, "completeness": -0.12, "confidence": -0.10},
+    },
+    "Source-Quality Focus": {
+        "description": "Emphasise source credibility and reliability over raw factual counts.",
+        "scorer": {
+            "credibility": {"factual_accuracy": 0.40, "evidence_support": 0.25, "source_reliability": 0.35},
+            "completeness": {"viewpoint_coverage": 0.55, "context_depth": 0.25, "evidence_support": 0.20},
+            "bias": {"narrative_bias": 0.65, "loaded_language": 0.35},
+            "confidence": {"evidence_support": 0.35, "source_reliability": 0.35, "viewpoint_coverage": 0.20, "json_validity": 0.10},
+        },
+        "v2": {"factual_accuracy": 0.30, "narrative_bias": 0.25, "completeness": 0.20, "confidence": 0.25},
+        "lang": {"narrative_bias": 0.50, "factual_accuracy": -0.15, "completeness": -0.08, "confidence": -0.08},
+    },
+    "Overall-Conservative": {
+        "description": "Maximum skepticism — low scores unless evidence is very strong.",
+        "scorer": {
+            "credibility": {"factual_accuracy": 0.65, "evidence_support": 0.30, "source_reliability": 0.05},
+            "completeness": {"viewpoint_coverage": 0.65, "context_depth": 0.20, "evidence_support": 0.15},
+            "bias": {"narrative_bias": 0.75, "loaded_language": 0.25},
+            "confidence": {"evidence_support": 0.50, "source_reliability": 0.15, "viewpoint_coverage": 0.25, "json_validity": 0.10},
+        },
+        "v2": {"factual_accuracy": 0.40, "narrative_bias": 0.30, "completeness": 0.15, "confidence": 0.15},
+        "lang": {"narrative_bias": 0.70, "factual_accuracy": -0.22, "completeness": -0.14, "confidence": -0.12},
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# WEIGHT RECOMPUTATION HELPER
+# ---------------------------------------------------------------------------
+def _clamp_w(v: float) -> float:
+    return max(0.0, min(1.0, float(v)))
+
+
+def _weighted_sum_w(values: dict[str, float], weights: dict[str, float]) -> float:
+    return round(_clamp_w(sum(values.get(k, 0.0) * w for k, w in weights.items())), 4)
+
+
+def recompute_calibrated_scores(
+    calibrated_scores: dict[str, Any],
+    custom_scorer_weights: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    """Re-derive credibility / completeness / bias / confidence from stored component_scores
+    using the user-supplied weight overrides, without calling the LLM again."""
+    if not calibrated_scores or not calibrated_scores.get("component_scores"):
+        return calibrated_scores
+    cs = calibrated_scores["component_scores"]
+    json_validity = float(calibrated_scores.get("normalization", {}).get("json_validity", 1.0))
+    cs_with_jv = dict(cs)
+    cs_with_jv["json_validity"] = _clamp_w(json_validity)
+    credibility = _weighted_sum_w(cs, custom_scorer_weights["credibility"])
+    completeness = _weighted_sum_w(cs, custom_scorer_weights["completeness"])
+    bias = _weighted_sum_w(cs, custom_scorer_weights["bias"])
+    confidence = _weighted_sum_w(cs_with_jv, custom_scorer_weights["confidence"])
+    updated = dict(calibrated_scores)
+    updated["credibility_score"] = credibility
+    updated["completeness_score"] = completeness
+    updated["bias_score"] = bias
+    updated["confidence"] = confidence
+    updated["_custom_weights_applied"] = True
+    return updated
+
+
+def recompute_v2_scores(
+    output: dict[str, Any],
+    custom_v2_weights: dict[str, float],
+    custom_lang: dict[str, float],
+) -> dict[str, float]:
+    """Re-derive the v2 scores (factual_accuracy etc.) using custom weights.
+    Replays the scoring_v2 formula on the already-computed sub-scores."""
+    scores = dict(output.get("scores", {}))
+    wl = float(output.get("weighted_language_score", 0.0))
+    # Start from claim-level sub-scores before language adjustment by reversing it
+    # We use the stored scores and replay language adjustment with new multipliers
+    base_fa = _clamp_w(scores.get("factual_accuracy", 0.0) + (DEFAULT_LANG_ADJUSTMENTS["factual_accuracy"] * -1 * wl))
+    base_nb = _clamp_w(scores.get("narrative_bias", 0.0) - (DEFAULT_LANG_ADJUSTMENTS["narrative_bias"] * wl))
+    base_co = _clamp_w(scores.get("completeness", 0.0) + (DEFAULT_LANG_ADJUSTMENTS["completeness"] * -1 * wl))
+    base_cf = _clamp_w(scores.get("confidence", 0.0) + (DEFAULT_LANG_ADJUSTMENTS["confidence"] * -1 * wl))
+    # Reapply language adjustment with custom multipliers
+    new_fa = round(_clamp_w(base_fa + custom_lang["factual_accuracy"] * wl), 4)
+    new_nb = round(_clamp_w(base_nb + custom_lang["narrative_bias"] * wl), 4)
+    new_co = round(_clamp_w(base_co + custom_lang["completeness"] * wl), 4)
+    new_cf = round(_clamp_w(base_cf + custom_lang["confidence"] * wl), 4)
+    # Recompute final score with v2 weights
+    final = _clamp_w(
+        new_fa * custom_v2_weights["factual_accuracy"]
+        + (1.0 - new_nb) * custom_v2_weights["narrative_bias"]
+        + new_co * custom_v2_weights["completeness"]
+        + new_cf * custom_v2_weights["confidence"]
+    )
+    return {
+        "factual_accuracy": new_fa,
+        "narrative_bias": new_nb,
+        "completeness": new_co,
+        "confidence": new_cf,
+        "final_score": round(final, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# SCORE CARD HELPERS
+# ---------------------------------------------------------------------------
 def render_score_card(title: str, value: float, inverse: bool = False) -> None:
     """Render one score with a progress bar."""
     normalized_value = max(0.0, min(1.0, float(value)))
@@ -865,6 +1071,217 @@ if st.session_state.get("startup_warmup_message"):
     else:
         st.warning(st.session_state.startup_warmup_message)
 
+# ---------------------------------------------------------------------------
+# SIDEBAR — SCORING WEIGHT ADJUSTER
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.header("Scoring Weights")
+    st.caption(
+        "Select a scoring profile. Sliders are filled automatically. "
+        "Expand Fine-tune weights below to adjust individual values."
+    )
+
+    # ── READY-MADE COMBINATIONS ─────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Ready-Made Combinations")
+
+    _PRESET_OPTIONS = {
+        "Default (Balanced)": {
+            "label": "Balanced",
+            "description": "Equal weight across all dimensions. Suitable for general-purpose analysis.",
+            "scorer": {
+                "credibility":  {"factual_accuracy": 0.60, "evidence_support": 0.25, "source_reliability": 0.15},
+                "completeness": {"viewpoint_coverage": 0.60, "context_depth": 0.25, "evidence_support": 0.15},
+                "bias":         {"narrative_bias": 0.70, "loaded_language": 0.30},
+                "confidence":   {"evidence_support": 0.45, "source_reliability": 0.20, "viewpoint_coverage": 0.20, "json_validity": 0.15},
+            },
+            "v2":   {"factual_accuracy": 0.35, "narrative_bias": 0.25, "completeness": 0.20, "confidence": 0.20},
+            "lang": {"narrative_bias": 0.55, "factual_accuracy": -0.18, "completeness": -0.10, "confidence": -0.08},
+        },
+        "Factual Accuracy": {
+            "label": "Factual Accuracy",
+            "description": "Prioritises factual claim verification and evidence support. Recommended for hard news and investigative reporting.",
+            "scorer": {
+                "credibility":  {"factual_accuracy": 0.75, "evidence_support": 0.20, "source_reliability": 0.05},
+                "completeness": {"viewpoint_coverage": 0.50, "context_depth": 0.30, "evidence_support": 0.20},
+                "bias":         {"narrative_bias": 0.65, "loaded_language": 0.35},
+                "confidence":   {"evidence_support": 0.55, "source_reliability": 0.20, "viewpoint_coverage": 0.15, "json_validity": 0.10},
+            },
+            "v2":   {"factual_accuracy": 0.50, "narrative_bias": 0.20, "completeness": 0.15, "confidence": 0.15},
+            "lang": {"narrative_bias": 0.40, "factual_accuracy": -0.25, "completeness": -0.08, "confidence": -0.06},
+        },
+        "Bias Detection": {
+            "label": "Bias Detection",
+            "description": "Emphasises narrative framing and loaded language. Suited for opinion pieces and editorial content.",
+            "scorer": {
+                "credibility":  {"factual_accuracy": 0.50, "evidence_support": 0.30, "source_reliability": 0.20},
+                "completeness": {"viewpoint_coverage": 0.65, "context_depth": 0.20, "evidence_support": 0.15},
+                "bias":         {"narrative_bias": 0.85, "loaded_language": 0.15},
+                "confidence":   {"evidence_support": 0.40, "source_reliability": 0.20, "viewpoint_coverage": 0.25, "json_validity": 0.15},
+            },
+            "v2":   {"factual_accuracy": 0.15, "narrative_bias": 0.50, "completeness": 0.20, "confidence": 0.15},
+            "lang": {"narrative_bias": 0.80, "factual_accuracy": -0.10, "completeness": -0.10, "confidence": -0.05},
+        },
+        "Viewpoint Coverage": {
+            "label": "Viewpoint Coverage",
+            "description": "Penalises missing perspectives and one-sided coverage. Suited for political and social reporting.",
+            "scorer": {
+                "credibility":  {"factual_accuracy": 0.55, "evidence_support": 0.30, "source_reliability": 0.15},
+                "completeness": {"viewpoint_coverage": 0.75, "context_depth": 0.15, "evidence_support": 0.10},
+                "bias":         {"narrative_bias": 0.60, "loaded_language": 0.40},
+                "confidence":   {"evidence_support": 0.40, "source_reliability": 0.15, "viewpoint_coverage": 0.35, "json_validity": 0.10},
+            },
+            "v2":   {"factual_accuracy": 0.20, "narrative_bias": 0.20, "completeness": 0.45, "confidence": 0.15},
+            "lang": {"narrative_bias": 0.50, "factual_accuracy": -0.15, "completeness": -0.18, "confidence": -0.08},
+        },
+        "Source Reliability": {
+            "label": "Source Reliability",
+            "description": "Weights source credibility and diversity. Suited for cross-outlet comparative analysis.",
+            "scorer": {
+                "credibility":  {"factual_accuracy": 0.35, "evidence_support": 0.25, "source_reliability": 0.40},
+                "completeness": {"viewpoint_coverage": 0.55, "context_depth": 0.25, "evidence_support": 0.20},
+                "bias":         {"narrative_bias": 0.65, "loaded_language": 0.35},
+                "confidence":   {"evidence_support": 0.30, "source_reliability": 0.45, "viewpoint_coverage": 0.15, "json_validity": 0.10},
+            },
+            "v2":   {"factual_accuracy": 0.25, "narrative_bias": 0.20, "completeness": 0.15, "confidence": 0.40},
+            "lang": {"narrative_bias": 0.50, "factual_accuracy": -0.15, "completeness": -0.08, "confidence": -0.08},
+        },
+        "Strict Evidence": {
+            "label": "Strict Evidence",
+            "description": "Strict scoring. Requires strong, high-quality evidence at every level.",
+            "scorer": {
+                "credibility":  {"factual_accuracy": 0.50, "evidence_support": 0.40, "source_reliability": 0.10},
+                "completeness": {"viewpoint_coverage": 0.50, "context_depth": 0.20, "evidence_support": 0.30},
+                "bias":         {"narrative_bias": 0.70, "loaded_language": 0.30},
+                "confidence":   {"evidence_support": 0.65, "source_reliability": 0.15, "viewpoint_coverage": 0.10, "json_validity": 0.10},
+            },
+            "v2":   {"factual_accuracy": 0.30, "narrative_bias": 0.25, "completeness": 0.25, "confidence": 0.20},
+            "lang": {"narrative_bias": 0.60, "factual_accuracy": -0.22, "completeness": -0.14, "confidence": -0.12},
+        },
+        "Lenient Assessment": {
+            "label": "Lenient Assessment",
+            "description": "Relaxed weights for rapid triage. Reduces false positives but may miss subtle bias.",
+            "scorer": {
+                "credibility":  {"factual_accuracy": 0.50, "evidence_support": 0.30, "source_reliability": 0.20},
+                "completeness": {"viewpoint_coverage": 0.50, "context_depth": 0.30, "evidence_support": 0.20},
+                "bias":         {"narrative_bias": 0.60, "loaded_language": 0.40},
+                "confidence":   {"evidence_support": 0.40, "source_reliability": 0.25, "viewpoint_coverage": 0.20, "json_validity": 0.15},
+            },
+            "v2":   {"factual_accuracy": 0.30, "narrative_bias": 0.20, "completeness": 0.25, "confidence": 0.25},
+            "lang": {"narrative_bias": 0.30, "factual_accuracy": -0.10, "completeness": -0.05, "confidence": -0.05},
+        },
+        "Maximum Scrutiny": {
+            "label": "Maximum Scrutiny",
+            "description": "Maximum scrutiny across all dimensions. Requires robust multi-source evidence for high scores.",
+            "scorer": {
+                "credibility":  {"factual_accuracy": 0.65, "evidence_support": 0.30, "source_reliability": 0.05},
+                "completeness": {"viewpoint_coverage": 0.65, "context_depth": 0.20, "evidence_support": 0.15},
+                "bias":         {"narrative_bias": 0.80, "loaded_language": 0.20},
+                "confidence":   {"evidence_support": 0.55, "source_reliability": 0.15, "viewpoint_coverage": 0.20, "json_validity": 0.10},
+            },
+            "v2":   {"factual_accuracy": 0.40, "narrative_bias": 0.30, "completeness": 0.15, "confidence": 0.15},
+            "lang": {"narrative_bias": 0.75, "factual_accuracy": -0.25, "completeness": -0.16, "confidence": -0.14},
+        },
+    }
+
+    selected_preset_key = st.selectbox(
+        "Choose a scoring combination",
+        list(_PRESET_OPTIONS.keys()),
+        index=0,
+        key="weight_preset",
+    )
+    _sel = _PRESET_OPTIONS[selected_preset_key]
+    selected_preset_label = _sel["label"]
+    st.info(f"**{_sel['label']}** — {_sel['description']}")
+
+    def _pv(group: str, key: str) -> float:
+        return float(_sel["scorer"][group].get(key, 0.0))
+
+    def _pv2(key: str) -> float:
+        return float(_sel["v2"].get(key, 0.0))
+
+    def _plang(key: str) -> float:
+        return float(_sel["lang"].get(key, 0.0))
+
+    # ── FINE-TUNE EXPANDER ───────────────────────────────────────────────
+    with st.expander("Fine-tune weights manually", expanded=False):
+        st.caption("Sliders are pre-filled from the chosen combination above. Adjust to override.")
+
+        st.markdown("**Credibility Score**")
+        st.caption("→ credibility_score in calibrated view")
+        cred_fa = st.slider("Factual Accuracy weight", 0.0, 1.0, _pv("credibility", "factual_accuracy"), 0.05, key="cred_fa")
+        cred_es = st.slider("Evidence Support weight",  0.0, 1.0, _pv("credibility", "evidence_support"),  0.05, key="cred_es")
+        cred_sr = st.slider("Source Reliability weight", 0.0, 1.0, _pv("credibility", "source_reliability"), 0.05, key="cred_sr")
+        cred_total = cred_fa + cred_es + cred_sr
+        st.caption(f"Sum: **{cred_total:.2f}** {'✅' if abs(cred_total - 1.0) < 0.02 else '⚠️ should ≈ 1.0'}")
+
+        st.markdown("**Completeness Score**")
+        st.caption("→ completeness_score in calibrated view")
+        comp_vc = st.slider("Viewpoint Coverage weight", 0.0, 1.0, _pv("completeness", "viewpoint_coverage"), 0.05, key="comp_vc")
+        comp_cd = st.slider("Context Depth weight",       0.0, 1.0, _pv("completeness", "context_depth"),       0.05, key="comp_cd")
+        comp_es = st.slider("Evidence Support weight",    0.0, 1.0, _pv("completeness", "evidence_support"),    0.05, key="comp_es")
+        comp_total = comp_vc + comp_cd + comp_es
+        st.caption(f"Sum: **{comp_total:.2f}** {'✅' if abs(comp_total - 1.0) < 0.02 else '⚠️ should ≈ 1.0'}")
+
+        st.markdown("**Bias Score**")
+        st.caption("→ bias_score in calibrated view")
+        bias_nb = st.slider("Narrative Bias weight",   0.0, 1.0, _pv("bias", "narrative_bias"),   0.05, key="bias_nb")
+        bias_ll = st.slider("Loaded Language weight",  0.0, 1.0, _pv("bias", "loaded_language"),  0.05, key="bias_ll")
+        bias_total = bias_nb + bias_ll
+        st.caption(f"Sum: **{bias_total:.2f}** {'✅' if abs(bias_total - 1.0) < 0.02 else '⚠️ should ≈ 1.0'}")
+
+        st.markdown("**Confidence Score**")
+        st.caption("→ confidence in calibrated view")
+        conf_es = st.slider("Evidence Support weight",   0.0, 1.0, _pv("confidence", "evidence_support"),   0.05, key="conf_es")
+        conf_sr = st.slider("Source Reliability weight", 0.0, 1.0, _pv("confidence", "source_reliability"), 0.05, key="conf_sr")
+        conf_vc = st.slider("Viewpoint Coverage weight", 0.0, 1.0, _pv("confidence", "viewpoint_coverage"), 0.05, key="conf_vc")
+        conf_jv = st.slider("JSON Validity weight",      0.0, 1.0, _pv("confidence", "json_validity"),      0.05, key="conf_jv")
+        conf_total = conf_es + conf_sr + conf_vc + conf_jv
+        st.caption(f"Sum: **{conf_total:.2f}** {'✅' if abs(conf_total - 1.0) < 0.02 else '⚠️ should ≈ 1.0'}")
+
+        st.markdown("**Final Score Blend (V2)**")
+        st.caption("How much each dimension contributes to the blended final_score")
+        v2_fa = st.slider("Factual Accuracy",         0.0, 1.0, _pv2("factual_accuracy"), 0.05, key="v2_fa")
+        v2_nb = st.slider("Narrative Bias (inverted)", 0.0, 1.0, _pv2("narrative_bias"),   0.05, key="v2_nb")
+        v2_co = st.slider("Completeness",             0.0, 1.0, _pv2("completeness"),     0.05, key="v2_co")
+        v2_cf = st.slider("Confidence",               0.0, 1.0, _pv2("confidence"),       0.05, key="v2_cf")
+        v2_total = v2_fa + v2_nb + v2_co + v2_cf
+        st.caption(f"Sum: **{v2_total:.2f}** {'✅' if abs(v2_total - 1.0) < 0.02 else '⚠️ should ≈ 1.0'}")
+
+        st.markdown("**Language Penalty Multipliers**")
+        st.caption("Applied when loaded language is detected. Negative = penalty.")
+        lang_nb = st.slider("Narrative Bias boost",    0.0,  1.0, _plang("narrative_bias"),   0.05, key="lang_nb")
+        lang_fa = st.slider("Factual Accuracy penalty", -1.0, 0.0, _plang("factual_accuracy"), 0.01, key="lang_fa")
+        lang_co = st.slider("Completeness penalty",    -1.0, 0.0, _plang("completeness"),     0.01, key="lang_co")
+        lang_cf = st.slider("Confidence penalty",      -1.0, 0.0, _plang("confidence"),       0.01, key="lang_cf")
+
+    st.markdown("---")
+    if st.button("↺ Reset to Default", use_container_width=True):
+        for k in list(st.session_state.keys()):
+            if k.startswith(("cred_", "comp_", "bias_", "conf_", "v2_", "lang_", "weight_preset")):
+                del st.session_state[k]
+        st.rerun()
+
+# Assemble final custom weight dicts from sidebar slider values
+_custom_scorer_weights: dict[str, dict[str, float]] = {
+    "credibility": {"factual_accuracy": cred_fa, "evidence_support": cred_es, "source_reliability": cred_sr},
+    "completeness": {"viewpoint_coverage": comp_vc, "context_depth": comp_cd, "evidence_support": comp_es},
+    "bias": {"narrative_bias": bias_nb, "loaded_language": bias_ll},
+    "confidence": {"evidence_support": conf_es, "source_reliability": conf_sr, "viewpoint_coverage": conf_vc, "json_validity": conf_jv},
+}
+_custom_v2_weights: dict[str, float] = {
+    "factual_accuracy": v2_fa,
+    "narrative_bias": v2_nb,
+    "completeness": v2_co,
+    "confidence": v2_cf,
+}
+_custom_lang_adjustments: dict[str, float] = {
+    "narrative_bias": lang_nb,
+    "factual_accuracy": lang_fa,
+    "completeness": lang_co,
+    "confidence": lang_cf,
+}
+
 # input selector
 input_type = st.selectbox("Input Type", ["Text", "URL", "PDF"])
 
@@ -947,24 +1364,35 @@ if st.session_state.analysis_output and st.session_state.last_analyzed_text == a
         st.subheader("Simple Summary")
         render_simple_summary(output)
 
+        # ---------- SCORE OVERVIEW (custom weights applied to v2 scores) ----------
+        effective_scores = recompute_v2_scores(output, _custom_v2_weights, _custom_lang_adjustments)
         st.subheader("Score Overview")
         score_cols = st.columns(4)
         with score_cols[0]:
-            render_score_card("Factual Accuracy", scores.get("factual_accuracy", 0.0))
+            render_score_card("Factual Accuracy", effective_scores.get("factual_accuracy", 0.0))
         with score_cols[1]:
-            render_score_card("Narrative Bias", scores.get("narrative_bias", 0.0))
+            render_score_card("Narrative Bias", effective_scores.get("narrative_bias", 0.0))
         with score_cols[2]:
-            render_score_card("Completeness", scores.get("completeness", 0.0))
+            render_score_card("Completeness", effective_scores.get("completeness", 0.0))
         with score_cols[3]:
-            render_score_card("Confidence", scores.get("confidence", 0.0))
+            render_score_card("Confidence", effective_scores.get("confidence", 0.0))
 
         chart_col1, chart_col2 = st.columns(2)
         with chart_col1:
-            render_bar_chart("Overall Score Graph", build_score_chart_data(scores))
+            render_bar_chart("Overall Score Graph", build_score_chart_data(effective_scores))
         with chart_col2:
             render_pie_chart("Claim Stance Pie Chart", build_claim_stance_chart_data(output.get("claim_analysis", [])))
 
-        render_calibrated_score_section(calibrated_scores)
+        # Apply custom weights to calibrated scores (no re-inference needed)
+        effective_calibrated = recompute_calibrated_scores(calibrated_scores, _custom_scorer_weights)
+        effective_scores = recompute_v2_scores(output, _custom_v2_weights, _custom_lang_adjustments)
+
+        # Show indicator when custom weights differ from defaults
+        _using_custom = (selected_preset_label != "Default (Balanced)")
+        if _using_custom:
+            st.info(f"⚖️ Scores recalculated using **{selected_preset}** weight preset. Adjust sliders in the sidebar or run again to refresh.")
+
+        render_calibrated_score_section(effective_calibrated)
 
         left_col, right_col = st.columns(2)
         with left_col:
