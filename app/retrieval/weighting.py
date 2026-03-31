@@ -8,7 +8,7 @@ from app.retrieval.constants import CREDIBILITY_SCORES, DEFAULT_CREDIBILITY
 
 
 def apply_recency_weight(results: list[dict]) -> list[dict]:
-    """Apply a freshness-based multiplier to each result score."""
+    """Attach freshness metadata without overriding the primary relevance score."""
     today = datetime.today()
     for result in results:
         try:
@@ -26,7 +26,6 @@ def apply_recency_weight(results: list[dict]) -> list[dict]:
                 recency_boost = 0.90
             else:
                 recency_boost = 0.85
-            result["score"] = float(result["score"]) * recency_boost
             result["recency_boost"] = recency_boost
             result["days_old"] = days_old
         except Exception:

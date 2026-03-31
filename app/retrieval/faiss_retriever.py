@@ -41,6 +41,7 @@ QUERY_MIN_EMBED_CHARS = 400
 QUERY_EMBED_MAX_ATTEMPTS = 3
 QUERY_EMBED_RETRY_DELAY_SECONDS = 4.0
 _QUERY_EMBEDDER: OllamaEmbeddings | None = None
+RECENCY_TIE_THRESHOLD = 0.05
 
 
 def _is_ollama_runner_failure(error: Exception) -> bool:
@@ -79,6 +80,37 @@ def _prepare_query_text(query_text: str) -> str:
     """Normalize and trim the query to a safe initial embedding length."""
     normalized_query = " ".join(str(query_text).split())
     return normalized_query[:QUERY_MAX_EMBED_CHARS]
+
+
+def _apply_recency_tiebreak(results: list[dict], tie_threshold: float = RECENCY_TIE_THRESHOLD) -> list[dict]:
+    """Prefer newer items only when neighboring results are already very close in score."""
+    if len(results) < 2:
+        return results
+
+    ordered_results = sorted(results, key=lambda item: float(item.get("score", 0.0)), reverse=True)
+    index = 0
+    while index < len(ordered_results):
+        group_end = index + 1
+        while group_end < len(ordered_results):
+            current_score = float(ordered_results[group_end - 1].get("score", 0.0))
+            next_score = float(ordered_results[group_end].get("score", 0.0))
+            if abs(current_score - next_score) > tie_threshold:
+                break
+            group_end += 1
+
+        if group_end - index > 1:
+            tied_group = ordered_results[index:group_end]
+            tied_group.sort(
+                key=lambda item: (
+                    int(item.get("days_old", 10**9)) if int(item.get("days_old", -1)) >= 0 else 10**9,
+                    -float(item.get("score", 0.0)),
+                )
+            )
+            ordered_results[index:group_end] = tied_group
+
+        index = group_end
+
+    return ordered_results
 
 
 def _filter_irrelevant_results(query_text: str, results: list[dict]) -> list[dict]:
@@ -194,6 +226,7 @@ def retrieve_similar_chunks(
         final_results = cross_encoder_rerank(query_text, all_results)
         if retrieval_plan.get("diversity_required", False):
             final_results = diversify_results(final_results, TOP_K_FINAL_MAX)
+        final_results = _apply_recency_tiebreak(final_results)
         final_results = _filter_irrelevant_results(query_text, final_results)
         return final_results
     except Exception as error:
@@ -210,6 +243,7 @@ def retrieve_similar_chunks(
                         fallback_results = apply_credibility_weight(fallback_results)
                     if retrieval_plan.get("diversity_required", False):
                         fallback_results = diversify_results(fallback_results, TOP_K_FINAL_MAX)
+                fallback_results = _apply_recency_tiebreak(fallback_results)
                 fallback_results = _filter_irrelevant_results(query_text, fallback_results)
                 print(f"BM25 fallback recovered {len(fallback_results)} results")
                 return fallback_results
