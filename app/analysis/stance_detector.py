@@ -20,6 +20,7 @@ LOGGER = logging.getLogger(__name__)
 STANCE_SUPPORT = "SUPPORT"
 STANCE_CONTRADICT = "CONTRADICT"
 STANCE_NEUTRAL = "NEUTRAL"
+STANCE_MIXED = "MIXED"
 
 # ---------------------------------------------------------------------------
 # LLM configuration
@@ -300,38 +301,55 @@ def detect_claim_stance(claim: str, evidence_items: list[dict[str, Any]]) -> dic
         if contradict_bucket else 0.0
     )
 
+    # 1. Clear Contradiction Dominance
     if (
         len(contradict_bucket) >= 2
-        and contradict_avg >= 0.72
-        and len(contradict_bucket) > len(support_bucket)
-        and contradict_avg >= support_avg + 0.08
+        and (
+            # Simple majority in count if count is high enough (e.g. 4 vs 2, 3 vs 1)
+            (len(contradict_bucket) > len(support_bucket) + 1 and contradict_avg >= 0.55)
+            # Or clear confidence gap
+            or (contradict_avg >= 0.70 and contradict_avg >= support_avg + 0.08)
+            # Or absolute dominance
+            or (len(contradict_bucket) >= 3 and not support_bucket)
+        )
     ):
         overall_stance = STANCE_CONTRADICT
         chosen_bucket = contradict_bucket
+    
+    # 2. Clear Support Dominance
     elif (
         support_bucket
         and (
-            support_avg >= 0.54
-            or len(strong_support_bucket) >= 2
+            # Simple majority in count
+            (len(support_bucket) > len(contradict_bucket) + 1 and support_avg >= 0.55)
+            # Or clear confidence gap or multiple strong items
+            or support_avg >= 0.65 or len(strong_support_bucket) >= 2
         )
         and (
             not contradict_bucket
             or support_avg >= contradict_avg + 0.03
-            or len(support_bucket) >= len(contradict_bucket)
-            or len(strong_support_bucket) >= 2
+            or len(support_bucket) >= len(contradict_bucket) + 1
         )
     ):
         overall_stance = STANCE_SUPPORT
         chosen_bucket = strong_support_bucket or support_bucket
+    
+    # 3. Mixed Evidence (Both sides present and strong)
+    elif support_bucket and contradict_bucket and (support_avg >= 0.45 and contradict_avg >= 0.45):
+        overall_stance = STANCE_MIXED
+        chosen_bucket = sorted(support_bucket + contradict_bucket, key=lambda x: x["stance_confidence"], reverse=True)
+    
+    # 4. Neutral or Indeterminate
     else:
         overall_stance = STANCE_NEUTRAL
-        chosen_bucket = neutral_bucket or (support_bucket + contradict_bucket)
+        chosen_bucket = neutral_bucket or sorted(support_bucket + contradict_bucket, key=lambda x: x["stance_confidence"], reverse=True)
 
+    # Prepare top evidence list for display
     chosen_bucket = sorted(
         chosen_bucket,
         key=lambda item: (item["stance_confidence"], item["score"]),
         reverse=True,
-    )[:3]
+    )[:4] # Show up to 4 top items
 
     return {
         "claim": claim,
