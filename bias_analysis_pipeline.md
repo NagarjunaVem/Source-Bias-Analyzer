@@ -81,6 +81,19 @@ classDiagram
     class BiasDetector {
         +analyze_bias()
     }
+
+    Chunker --> Embedding
+    Embedding --> VectorStore
+    Retriever --> VectorStore
+    Retriever --> Reranker
+    Retriever --> CrossEncoderReranker
+
+    BiasDetector --> ClaimExtractor
+    BiasDetector --> Retriever
+    BiasDetector --> StanceDetector
+    BiasDetector --> ContradictionDetector
+    BiasDetector --> NarrativeAnalyzer
+    BiasDetector --> Scoring
 ```
 
 ---
