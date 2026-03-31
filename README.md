@@ -25,20 +25,20 @@ The system runs fully offline using [Ollama](https://ollama.com/) for all AI inf
 
 ```mermaid
 flowchart TD
-    A["🖥️ User Input\n(URL / PDF / text)"]
-    B["📄 Text Extraction"]
-    C["🗺️ Query Planning\n(gemma2:9b)"]
-    D["🔍 Hybrid Retrieval\n(FAISS + BM25)"]
-    E["⚖️ Credibility &\nRecency Weighting"]
-    F["🔁 Cross-Encoder\nReranking"]
-    G["🧾 Claim Extraction"]
-    H["🔍 Claim-Level\nRetrieval"]
-    I["📐 Stance Detection"]
-    J["⚡ Contradiction\nDetection"]
-    K["🧠 Narrative Analysis\n(qwen2.5:7b)"]
-    L["🗣️ Loaded Language\nDetection"]
-    M["📊 Scoring Engine\n(phi3:mini)"]
-    N["📑 UI + PDF Report"]
+    A["User Input\n(URL / PDF / text)"]
+    B["Text Extraction"]
+    C["Query Planning\n(gemma2:9b)"]
+    D["Hybrid Retrieval\n(FAISS + BM25)"]
+    E["Credibility &\nRecency Weighting"]
+    F["Cross-Encoder\nReranking"]
+    G["Claim Extraction"]
+    H["Claim-Level\nRetrieval"]
+    I["Stance Detection"]
+    J["Contradiction\nDetection"]
+    K["Narrative Analysis\n(qwen2.5:7b)"]
+    L["Loaded Language\nDetection"]
+    M["Scoring Engine\n(phi3:mini)"]
+    N["UI + PDF Report"]
 
     A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L --> M --> N
 ```
@@ -47,16 +47,16 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph PRODUCER["🕷️ Scraper Loop — Producer"]
-        P1["39 Async Scrapers\n(RSS + BFS Web)\nup to 5 hours"]
+    subgraph PRODUCER["Scraper Loop — Producer"]
+        P1["39 Async Scrapers\n(RSS + BFS Web)\nup to 3 hours"]
         P2["data/web/<source>.json\ndata/rss/<source>.json"]
         P3["data/indexing_queue/\ncycle_N_TIMESTAMP/"]
-        P4["🔄 Restart immediately\n(zero blocking)"]
+        P4["Restart immediately\n(zero blocking)"]
         P1 --> P2 --> P3 --> P4
     end
 
-    subgraph CONSUMER["⚙️ Index Worker — Consumer"]
-        C0["Poll indexing_queue/\nevery 60 seconds"]
+    subgraph CONSUMER["Index Worker — Consumer"]
+        C0["Poll indexing_queue/\nevery 3 hours"]
         C1["Step A: Consolidate JSONs\n→ new_articles_detailed.jsonl"]
         C2["Step B: build_index_pipeline()\n→ FAISS vector DB"]
         C3["Step C: Append to\nuniversal DB (data/)"]
