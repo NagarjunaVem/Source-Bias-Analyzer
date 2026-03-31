@@ -10,6 +10,27 @@ import feedparser
 from bs4 import BeautifulSoup
 from dateutil import parser as dt_parser
 
+
+DATE_RE = re.compile(r"20\d{2}-\d{2}-\d{2}")
+LONG_NUM = re.compile(r"\d{6,}")
+
+BAD_SEGMENTS = {
+    "tag",
+    "topic",
+    "category",
+    "search",
+    "author",
+    "page"
+}
+
+ARTICLE_HINTS = {
+    "story",
+    "article",
+    "news",
+    "video",
+    "liveblog"
+}
+
 try:
     import trafilatura
 except Exception:  # pragma: no cover - optional dependency
@@ -19,6 +40,8 @@ try:
     from readability import Document
 except Exception:  # pragma: no cover - optional dependency
     Document = None
+
+
 
 
 NOISE_TAGS = ["script", "style", "noscript", "nav", "footer", "header", "aside", "form", "svg", "button"]
@@ -127,26 +150,86 @@ def is_relevant_http_url(url: str) -> bool:
     return low.startswith(("http://", "https://"))
 
 
-def is_probable_article_url(url: str) -> bool:
-    low = url.lower()
-    if low.endswith(SKIP_EXTENSIONS):
+#PREVIOUS VERSION (KEPT FOR REFERNCE IN FUTURE)
+
+# def is_probable_article_url(url: str) -> bool:
+#     low = url.lower()
+
+#     # ❌ skip non-article files
+#     if low.endswith(SKIP_EXTENSIONS):
+#         return False
+
+#     # ✅ common article patterns
+#     article_tokens = (
+#         "/news/",
+#         "/article/",
+#         "/articles/",
+#         "/latest",
+#         "/world/",
+#         "/india/",
+#         "/story",
+#         "/stories/",
+#     )
+
+#     if any(token in low for token in article_tokens):
+#         return True
+
+#     # ✅ date-based URLs
+#     return bool(re.search(r"/20\d{2}/\d{1,2}/\d{1,2}/", low))
+
+
+def is_probable_article_url(url: str, text: str | None = None) -> bool:
+    parsed = urlparse(url)
+
+    # 🚫 reject non-http
+    if parsed.scheme not in {"http", "https"}:
         return False
 
-    article_tokens = (
-        "/news/",
-        "/article/",
-        "/articles/",
-        "/latest",
-        "/world/",
-        "/india/",
-        "/story",
-        "/stories/",
-    )
-    if any(token in low for token in article_tokens):
-        return True
+    # 🚫 skip static files
+    if url.lower().endswith(SKIP_EXTENSIONS):
+        return False
 
-    return bool(re.search(r"/20\d{2}/\d{1,2}/\d{1,2}/", low))
+    segments = [s for s in parsed.path.split("/") if s]
 
+    score = 0
+
+    # 🔴 phase 1: bad segments
+    if any(b in segments for b in BAD_SEGMENTS):
+        return False
+
+    # 🟢 phase 2: depth
+    if len(segments) >= 3:
+        score += 1
+
+    # 🟢 phase 3: slug quality
+    if segments:
+        slug = segments[-1]
+
+        if len(slug) > 40:
+            score += 1
+
+        if slug.count("-") >= 3:
+            score += 1
+
+    # 🟢 phase 4: article hints
+    if any(a in segments for a in ARTICLE_HINTS):
+        score += 1
+
+    # 🟢 phase 5: patterns
+    if DATE_RE.search(url):
+        score += 2
+
+    if LONG_NUM.search(url):
+        score += 1
+
+    # 🟢 phase 6: content length (optional but powerful)
+    if text:
+        if len(text) > 1500:
+            score += 2
+        elif len(text) < 300:
+            score -= 1
+
+    return score >= 3
 
 def parse_datetime_to_iso(raw_value: object | None) -> str | None:
     if raw_value is None:
