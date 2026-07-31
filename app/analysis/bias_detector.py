@@ -51,6 +51,16 @@ def _cached_search(query_text: str, base_dir: str, top_k: int, stage_label: str)
     return tuple(dict(item) for item in results)
 
 
+def clear_retrieval_cache() -> None:
+    """Drop memoized retrieval results.
+
+    The cache only needs to live for the duration of one analysis. Keeping it beyond
+    that would serve stale evidence in a long-running process (e.g. Streamlit) after
+    the index worker has added newly scraped articles.
+    """
+    _cached_search.cache_clear()
+
+
 def _retrieve_evidence(query_text: str, base_dir: str, top_k: int, stage_label: str) -> list[dict[str, Any]]:
     try:
         raw_results = [dict(item) for item in _cached_search(query_text, base_dir, top_k, stage_label)]
@@ -225,6 +235,7 @@ def analyze_bias(
 ) -> dict[str, Any]:
     """Run the production-style evidence-based bias analysis pipeline."""
     article = _validate_input(article_text)
+    clear_retrieval_cache()
     article_evidence = (
         [dict(item) for item in initial_evidence]
         if initial_evidence is not None

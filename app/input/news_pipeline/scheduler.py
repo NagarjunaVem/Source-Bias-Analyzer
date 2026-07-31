@@ -3,19 +3,23 @@ scheduler.py
 -------------
 Runs the news crawler and the indexing pipeline using a Producer-Consumer model.
 
+Paths below are relative to the crawler output base (OUTPUT_BASE_PATH,
+default: app/input/data/).
+
 1. PRODUCER (Scraper Loop):
    - Runs all scrapers continuously.
-   - Every 5 hours, force-terminates the crawler.
-   - Moves all JSON data (data/web/*.json + data/rss/*.json) into
-     a new timestamped queue folder (data/indexing_queue/cycle...).
+   - After CRAWLER_CYCLE_INTERVAL_MINUTES (default 120), force-terminates the crawler.
+   - Moves all JSON data (web/*.json + rss/*.json) into
+     a new timestamped queue folder (indexing_queue/cycle_N_TIMESTAMP/).
    - Restarts the crawler immediately with fresh, empty folders.
 
 2. CONSUMER (Index Worker):
-   - Runs continuously in the background.
+   - Runs continuously in the background, polling every 60 seconds.
    - Scans the `indexing_queue` folder.
    - If a cycle folder is found:
-       - Consolidates its JSONs into `data/new_articles_detailed.jsonl`.
-       - Triggers `build_index_pipeline()` to update the FAISS vector database.
+       - Consolidates its JSONs into `new_articles_detailed.jsonl`.
+       - Triggers `process_cycle()` to append to the per-publisher FAISS indexes.
+       - Appends the raw articles to the universal DB at the project root `data/`.
        - Deletes ("scraps") the cycle folder to save disk space.
 """
 

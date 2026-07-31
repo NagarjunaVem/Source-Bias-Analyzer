@@ -30,9 +30,49 @@ def ensure_cosine_index(index):
     return index
 
 
-@lru_cache(maxsize=4)
+def _index_fingerprint(base_dir: str) -> tuple[int, int]:
+    """Summarize the on-disk index state so the cache reloads after the indexer writes.
+
+    Returns (file count, newest mtime in nanoseconds). The index worker rewrites
+    articles.index / metadata.json whenever a scrape cycle is consumed, so a change
+    in either component means the cached bundles are stale.
+    """
+    newest_mtime_ns = 0
+    file_count = 0
+    try:
+        for site in os.listdir(base_dir):
+            site_path = os.path.join(base_dir, site)
+            if not os.path.isdir(site_path):
+                continue
+            for filename in ("articles.index", "metadata.json"):
+                file_path = os.path.join(site_path, filename)
+                try:
+                    newest_mtime_ns = max(newest_mtime_ns, os.stat(file_path).st_mtime_ns)
+                    file_count += 1
+                except OSError:
+                    continue
+    except OSError:
+        return (0, 0)
+    return (file_count, newest_mtime_ns)
+
+
 def load_all_indexes(base_dir: str) -> list[dict]:
-    """Load every site index folder and prepare both FAISS and BM25 indexes."""
+    """Load every site index folder, reusing cached bundles until the indexes change."""
+    return _load_all_indexes_cached(base_dir, _index_fingerprint(base_dir))
+
+
+def refresh_indexes() -> None:
+    """Drop every cached index bundle so the next load re-reads from disk."""
+    _load_all_indexes_cached.cache_clear()
+
+
+@lru_cache(maxsize=2)
+def _load_all_indexes_cached(base_dir: str, fingerprint: tuple[int, int]) -> list[dict]:
+    """Load every site index folder and prepare both FAISS and BM25 indexes.
+
+    `fingerprint` is not read inside the function — it is part of the cache key so a
+    freshly written index invalidates the entry automatically.
+    """
     loaded_sites: list[dict] = []
     for site in sorted(os.listdir(base_dir)):
         site_path = os.path.join(base_dir, site)

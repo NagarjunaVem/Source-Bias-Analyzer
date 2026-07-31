@@ -1,24 +1,27 @@
-newspaper3k
-Pillow
-nltk
-trafilatura
-readability-lxml
-chardet
-apscheduler
-aiohttp
-requests
-beautifulsoup4
-lxml
-feedparser
-python-dateutil
-python-dotenv
-faiss-cpu
+# Source-Bias-Analyzer runtime dependencies.
+# Every package listed here is imported by project code. Ollama itself is a
+# separate native install (https://ollama.com) — it is not a pip package.
+
+# --- Scraping / ingestion -----------------------------------------------------
+aiohttp                 # async crawler (crawler.py, scrapers/base.py)
+requests                # sync HTTP + direct Ollama /api/generate calls
+beautifulsoup4          # HTML parsing (extractors.py, streamlit_app.py)
+lxml                    # parser backend used by BeautifulSoup(..., "lxml")
+feedparser              # RSS/Atom parsing
+trafilatura             # primary article-body extractor
+readability-lxml        # fallback article-body extractor
+python-dateutil         # published-date parsing
+python-dotenv           # .env crawler settings
+
+# --- Embeddings / retrieval ---------------------------------------------------
 numpy
-langchain-ollama
-tqdm
-streamlit
-fitz
-pymupdf
-torch
-sentence_transformers
-rank_bm25
+faiss-cpu               # per-publisher vector indexes
+rank_bm25               # lexical half of hybrid retrieval
+langchain-ollama        # OllamaEmbeddings + ChatOllama
+langchain-core          # prompt templates used by query_planner.py
+ollama                  # ResponseError handling in embed.py / faiss_retriever.py
+tqdm                    # batch embedding progress
+
+# --- UI / reporting -----------------------------------------------------------
+streamlit               # dashboard
+pymupdf                 # PDF text extraction + report generation (imported as fitz)
